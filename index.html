@@ -64,6 +64,33 @@
                   </label>
                 </div>
               </fieldset>
+
+              <fieldset class="option-group">
+                <legend><span>03</span> 배경</legend>
+                <div class="option-grid option-grid--backgrounds">
+                  <label class="option-card background-card">
+                    <input type="radio" name="background" value="neon-alley" />
+                    <span>
+                      <img src="/backgrounds/neon-alley.png" alt="" />
+                      <b>네온 골목</b>
+                    </span>
+                  </label>
+                  <label class="option-card background-card">
+                    <input type="radio" name="background" value="police-command-center" checked />
+                    <span>
+                      <img src="/backgrounds/police-command-center.png" alt="" />
+                      <b>경찰 지휘실</b>
+                    </span>
+                  </label>
+                  <label class="option-card background-card">
+                    <input type="radio" name="background" value="sunset-rooftop" />
+                    <span>
+                      <img src="/backgrounds/sunset-rooftop.png" alt="" />
+                      <b>선셋 루프탑</b>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
             </div>
             <p id="form-message" class="form-message" aria-live="polite"></p>
 
@@ -93,7 +120,14 @@
             </div>
 
             <div id="camera-stage" class="camera-stage">
-              <video id="camera-video" autoplay muted playsinline></video>
+              <img
+                id="scene-background"
+                class="scene-background"
+                src="/backgrounds/police-command-center.png"
+                alt=""
+                aria-hidden="true"
+              />
+              <video id="camera-video" autoplay muted playsinline aria-hidden="true"></video>
               <div id="avatar-overlay" class="avatar-overlay" data-visible="false" aria-hidden="true">
                 <img class="avatar-part avatar-image avatar-leg" data-part="left-thigh" src="/avatars/male-teen-police/left-thigh.png" alt="" draggable="false" />
                 <img class="avatar-part avatar-image avatar-leg" data-part="left-calf" src="/avatars/male-teen-police/left-calf.png" alt="" draggable="false" />
@@ -122,10 +156,10 @@
             </div>
 
             <div id="result-stage" class="result-stage" hidden>
-              <img id="capture-preview" alt="촬영한 사용자 사진" />
+              <img id="capture-preview" alt="배경과 아바타가 합성된 촬영 결과" />
               <div class="result-overlay">
                 <span>CAPTURE COMPLETE</span>
-                <strong>포즈와 아바타 옵션이 안전하게 저장됐어요.</strong>
+                <strong>배경과 아바타가 합성된 사진을 저장했어요.</strong>
                 <small id="session-label"></small>
               </div>
             </div>

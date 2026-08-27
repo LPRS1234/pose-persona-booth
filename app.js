@@ -4,6 +4,7 @@ const formMessage = document.querySelector("#form-message");
 const captureButton = document.querySelector("#capture-button");
 const captureButtonText = document.querySelector("#capture-button-text");
 const video = document.querySelector("#camera-video");
+const sceneBackground = document.querySelector("#scene-background");
 const canvas = document.querySelector("#capture-canvas");
 const cameraStage = document.querySelector("#camera-stage");
 const resultStage = document.querySelector("#result-stage");
@@ -21,6 +22,7 @@ const avatarParts = Object.fromEntries(
     element,
   ]),
 );
+const avatarPartGeometry = new Map();
 const poseReadiness = document.querySelector("#pose-readiness");
 const poseMessage = document.querySelector("#pose-message");
 
@@ -31,6 +33,24 @@ const STABLE_FRAME_COUNT = 6;
 const AVATAR_SMOOTHING = 0.35;
 const AVATAR_CONFIDENCE = 0.3;
 const SUPPORTED_AVATAR_KEY = "male-police";
+const BACKGROUND_IMAGES = {
+  "neon-alley": "/backgrounds/neon-alley.png",
+  "police-command-center": "/backgrounds/police-command-center.png",
+  "sunset-rooftop": "/backgrounds/sunset-rooftop.png",
+};
+const AVATAR_DRAW_ORDER = [
+  "left-thigh",
+  "left-calf",
+  "right-thigh",
+  "right-calf",
+  "pelvis",
+  "torso",
+  "left-upper-arm",
+  "left-lower-arm",
+  "right-upper-arm",
+  "right-lower-arm",
+  "head",
+];
 
 const poseInputCanvas = document.createElement("canvas");
 poseInputCanvas.width = POSE_INPUT_WIDTH;
@@ -54,12 +74,14 @@ function getAvatarOptions() {
   return {
     gender: form.elements.gender.value || null,
     profession: form.elements.profession.value || null,
+    background: form.elements.background.value || null,
   };
 }
 
 function getMissingOption(options) {
   if (!options.gender) return { name: "gender", label: "성별" };
   if (!options.profession) return { name: "profession", label: "직업" };
+  if (!options.background) return { name: "background", label: "배경" };
   return null;
 }
 
@@ -68,24 +90,32 @@ function buildAvatarKey(options) {
 }
 
 function updateButtonState() {
-  const missingOption = getMissingOption(getAvatarOptions());
+  const options = getAvatarOptions();
+  const missingOption = getMissingOption(options);
+  const avatarSupported = isSupportedAvatar(options);
   captureButton.disabled =
     !cameraReady ||
     !poseWorkerReady ||
     Boolean(missingOption) ||
+    !avatarSupported ||
+    !poseReady ||
     captureInProgress ||
     showingResult;
 
   if (showingResult) {
     captureButtonText.textContent = "촬영 완료";
   } else if (captureInProgress) {
-    captureButtonText.textContent = "포즈를 저장하는 중";
+    captureButtonText.textContent = "최종 화면을 저장하는 중";
   } else if (!cameraReady) {
     captureButtonText.textContent = "카메라 준비 중";
   } else if (!poseWorkerReady) {
     captureButtonText.textContent = "포즈 모델 준비 중";
   } else if (missingOption) {
     captureButtonText.textContent = `${missingOption.label}을 선택하세요`;
+  } else if (!avatarSupported) {
+    captureButtonText.textContent = "선택한 아바타 준비 중";
+  } else if (!poseReady) {
+    captureButtonText.textContent = "포즈를 인식하는 중";
   } else {
     captureButtonText.textContent = "지금 촬영하기";
   }
@@ -93,8 +123,18 @@ function updateButtonState() {
 
 function updateOptions() {
   formMessage.textContent = "";
+  updateSceneBackground();
   updateAvatarTheme();
   updateButtonState();
+}
+
+function updateSceneBackground() {
+  const background = form.elements.background.value;
+  const imageUrl = BACKGROUND_IMAGES[background];
+  if (!imageUrl) return;
+
+  sceneBackground.src = imageUrl;
+  cameraStage.dataset.background = background;
 }
 
 function stopCamera() {
@@ -189,7 +229,11 @@ function getAvatarPoint(landmarks, index, width, height) {
 }
 
 function setPartVisibility(element, visible) {
-  if (element) element.hidden = !visible;
+  if (!element) return;
+  element.hidden = !visible;
+  if (!visible) {
+    avatarPartGeometry.delete(element);
+  }
 }
 
 function getImageAspectRatio(element, fallback = 1) {
@@ -236,6 +280,14 @@ function updateSegment(
   element.style.width = `${length}px`;
   element.style.height = `${thickness}px`;
   element.style.transform = `translateY(-50%) rotate(${Math.atan2(dy, dx)}rad)`;
+  avatarPartGeometry.set(element, {
+    type: "segment",
+    x: start.x - unitX * startPadding,
+    y: start.y - unitY * startPadding,
+    width: length,
+    height: thickness,
+    angle: Math.atan2(dy, dx),
+  });
   setPartVisibility(element, true);
   return true;
 }
@@ -260,6 +312,16 @@ function updateAnchoredImage(
   element.style.height = `${imageHeight}px`;
   element.style.transformOrigin = `${originX * 100}% ${originY * 100}%`;
   element.style.transform = `rotate(${angle}rad)`;
+  avatarPartGeometry.set(element, {
+    type: "anchored",
+    x: anchor.x,
+    y: anchor.y,
+    width: imageWidth,
+    height: imageHeight,
+    angle,
+    originX,
+    originY,
+  });
   setPartVisibility(element, true);
   return true;
 }
@@ -553,38 +615,141 @@ async function startCamera() {
   updateButtonState();
 }
 
-function captureFrame() {
-  const width = video.videoWidth;
-  const height = video.videoHeight;
-  if (!width || !height) {
-    throw new Error("카메라 영상이 아직 준비되지 않았습니다.");
+function waitForImage(image) {
+  if (image.complete && image.naturalWidth > 0) return Promise.resolve();
+  return image.decode();
+}
+
+function drawImageCover(context, image, width, height) {
+  const imageRatio = image.naturalWidth / image.naturalHeight;
+  const canvasRatio = width / height;
+  let sourceX = 0;
+  let sourceY = 0;
+  let sourceWidth = image.naturalWidth;
+  let sourceHeight = image.naturalHeight;
+
+  if (imageRatio > canvasRatio) {
+    sourceWidth = image.naturalHeight * canvasRatio;
+    sourceX = (image.naturalWidth - sourceWidth) / 2;
+  } else {
+    sourceHeight = image.naturalWidth / canvasRatio;
+    sourceY = (image.naturalHeight - sourceHeight) / 2;
   }
 
+  context.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    0,
+    0,
+    width,
+    height,
+  );
+}
+
+function drawSceneShade(context, width, height, background) {
+  const isSunset = background === "sunset-rooftop";
+  const centerX = width * 0.5;
+  const centerY = height * (isSunset ? 0.42 : 0.45);
+  const innerRadius = Math.min(width, height) * (isSunset ? 0.1 : 0.18);
+  const outerRadius = Math.hypot(width, height) * 0.58;
+  const shade = context.createRadialGradient(
+    centerX,
+    centerY,
+    innerRadius,
+    centerX,
+    centerY,
+    outerRadius,
+  );
+  shade.addColorStop(0, isSunset ? "rgba(0, 0, 0, 0.1)" : "rgba(0, 0, 0, 0)");
+  shade.addColorStop(1, isSunset ? "rgba(0, 0, 0, 0.24)" : "rgba(0, 0, 0, 0.1)");
+  context.fillStyle = shade;
+  context.fillRect(0, 0, width, height);
+}
+
+function drawAvatarPart(context, image, geometry, scale) {
+  if (!geometry || image.hidden || image.naturalWidth <= 0) return;
+
+  context.save();
+  context.translate(geometry.x, geometry.y);
+  context.rotate(geometry.angle);
+  context.shadowColor = "rgba(49, 220, 255, 0.46)";
+  context.shadowBlur = 5 * scale;
+
+  if (geometry.type === "segment") {
+    context.drawImage(
+      image,
+      0,
+      -geometry.height / 2,
+      geometry.width,
+      geometry.height,
+    );
+  } else {
+    context.drawImage(
+      image,
+      -geometry.width * geometry.originX,
+      -geometry.height * geometry.originY,
+      geometry.width,
+      geometry.height,
+    );
+  }
+  context.restore();
+}
+
+async function captureCompositeFrame() {
+  const stageWidth = cameraStage.clientWidth;
+  const stageHeight = cameraStage.clientHeight;
+  if (
+    !stageWidth ||
+    !stageHeight ||
+    !poseReady ||
+    avatarOverlay.dataset.visible !== "true"
+  ) {
+    throw new Error("합성할 아바타 포즈가 아직 준비되지 않았습니다.");
+  }
+
+  await Promise.all([
+    waitForImage(sceneBackground),
+    ...Object.values(avatarParts).map(waitForImage),
+  ]);
+
+  const width = sceneBackground.naturalWidth || 1672;
+  const height = Math.round(width * (stageHeight / stageWidth));
+  const scaleX = width / stageWidth;
+  const scaleY = height / stageHeight;
   canvas.width = width;
   canvas.height = height;
+
   const context = canvas.getContext("2d", { alpha: false });
-  context.drawImage(video, 0, 0, width, height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  drawImageCover(context, sceneBackground, width, height);
+  drawSceneShade(context, width, height, getAvatarOptions().background);
+
+  context.save();
+  context.translate(width, 0);
+  context.scale(-scaleX, scaleY);
+  for (const partName of AVATAR_DRAW_ORDER) {
+    const image = avatarParts[partName];
+    drawAvatarPart(context, image, avatarPartGeometry.get(image), scaleX);
+  }
+  context.restore();
 
   return {
     width,
     height,
-    dataUrl: canvas.toDataURL("image/jpeg", 0.92),
+    dataUrl: canvas.toDataURL("image/png"),
   };
 }
 
-async function saveCapture(frame, avatarOptions) {
-  const avatarKey = buildAvatarKey(avatarOptions);
+async function saveCapture(frame) {
   const response = await fetch("/api/captures", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       image_data_url: frame.dataUrl,
-      image_width: frame.width,
-      image_height: frame.height,
-      avatar_options: avatarOptions,
-      avatar_key: avatarKey,
-      style_prompt: avatarKey,
-      client_captured_at: new Date().toISOString(),
     }),
   });
 
@@ -612,9 +777,7 @@ function showResult(payload) {
   cameraStage.hidden = true;
   resultStage.hidden = false;
   retakeButton.hidden = false;
-  cameraHelp.textContent = payload.landmark_count > 0
-    ? "촬영 사진, 스켈레톤, 33개 좌표가 같은 세션에 저장됐습니다."
-    : "촬영 사진은 저장됐으며, 포즈 좌표는 검출되지 않았습니다.";
+  cameraHelp.textContent = "배경과 아바타가 합성된 최종 사진이 세션에 저장됐습니다.";
 }
 
 function resetForRetake() {
@@ -640,15 +803,21 @@ form.addEventListener("submit", async (event) => {
     form.elements[missingOption.name][0].focus();
     return;
   }
-  if (!cameraReady || !poseWorkerReady || captureInProgress) return;
+  if (
+    !cameraReady ||
+    !poseWorkerReady ||
+    !poseReady ||
+    !isSupportedAvatar(avatarOptions) ||
+    captureInProgress
+  ) return;
 
   captureInProgress = true;
   formMessage.textContent = "";
   updateButtonState();
 
   try {
-    const frame = captureFrame();
-    const payload = await saveCapture(frame, avatarOptions);
+    const frame = await captureCompositeFrame();
+    const payload = await saveCapture(frame);
     showResult(payload);
   } catch (error) {
     formMessage.textContent = error.message;
