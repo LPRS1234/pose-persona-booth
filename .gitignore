@@ -1,0 +1,22 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Camera captures and local sessions
+captures/
+sessions/
+
+# Generated MediaPipe web assets
+public/mediapipe/wasm/
+public/models/
+
+# Local tooling and OS files
+.DS_Store
+Thumbs.db
+*.log
+

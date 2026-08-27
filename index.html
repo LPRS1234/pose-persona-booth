@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="사용자의 선택과 포즈를 담아 사이버펑크 아바타 사진을 만드는 전시 체험 부스"
+    />
+    <title>Pose Persona</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="booth-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Pose Persona 홈">
+          <span class="brand-mark" aria-hidden="true">P</span>
+          <span>
+            <strong>POSE PERSONA</strong>
+            <small>AI AVATAR PHOTO BOOTH</small>
+          </span>
+        </a>
+        <div class="live-pill"><span aria-hidden="true"></span> LOCAL SESSION</div>
+      </header>
+
+      <section class="experience-grid" aria-label="아바타 촬영">
+        <section class="control-panel">
+          <div class="step-label">CREATE YOUR CHARACTER</div>
+          <h1>당신의 페르소나를<br />선택하세요</h1>
+          <p class="lead">
+            성별, 나이, 직업을 선택하면 나만의 사이버펑크 아바타가 완성됩니다.
+          </p>
+
+          <form id="capture-form" novalidate>
+            <div class="avatar-options">
+              <fieldset class="option-group">
+                <legend><span>01</span> 성별</legend>
+                <div class="option-grid option-grid--two">
+                  <label class="option-card">
+                    <input type="radio" name="gender" value="male" />
+                    <span>남성</span>
+                  </label>
+                  <label class="option-card">
+                    <input type="radio" name="gender" value="female" />
+                    <span>여성</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="option-group">
+                <legend><span>02</span> 나이</legend>
+                <div class="option-grid option-grid--four">
+                  <label class="option-card">
+                    <input type="radio" name="age" value="teen" />
+                    <span>청소년</span>
+                  </label>
+                  <label class="option-card">
+                    <input type="radio" name="age" value="young" />
+                    <span>청년</span>
+                  </label>
+                  <label class="option-card">
+                    <input type="radio" name="age" value="middle" />
+                    <span>중년</span>
+                  </label>
+                  <label class="option-card">
+                    <input type="radio" name="age" value="senior" />
+                    <span>노년</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="option-group">
+                <legend><span>03</span> 직업</legend>
+                <div class="option-grid option-grid--three">
+                  <label class="option-card">
+                    <input type="radio" name="profession" value="police" />
+                    <span>경찰</span>
+                  </label>
+                  <label class="option-card">
+                    <input type="radio" name="profession" value="teacher" />
+                    <span>선생님</span>
+                  </label>
+                  <label class="option-card">
+                    <input type="radio" name="profession" value="soldier" />
+                    <span>군인</span>
+                  </label>
+                </div>
+              </fieldset>
+            </div>
+            <p id="form-message" class="form-message" aria-live="polite"></p>
+
+            <button id="capture-button" class="capture-button" type="submit" disabled>
+              <span class="shutter" aria-hidden="true"></span>
+              <span id="capture-button-text">카메라 준비 중</span>
+            </button>
+          </form>
+
+          <div class="privacy-note">
+            <span aria-hidden="true">●</span>
+            촬영 결과는 이 전시 PC에 세션별로 저장됩니다.
+          </div>
+        </section>
+
+        <section class="camera-panel">
+          <div class="camera-card">
+            <div class="camera-head">
+              <div>
+                <span class="eyebrow">LIVE CAMERA</span>
+                <strong id="camera-title">몸 전체가 보이면 더 정확하게 따라가요</strong>
+              </div>
+              <div id="camera-status" class="camera-status is-loading">
+                <span aria-hidden="true"></span>
+                연결 중
+              </div>
+            </div>
+
+            <div id="camera-stage" class="camera-stage">
+              <video id="camera-video" autoplay muted playsinline></video>
+              <div id="avatar-overlay" class="avatar-overlay" data-visible="false" aria-hidden="true">
+                <img class="avatar-part avatar-image avatar-leg" data-part="left-thigh" src="/avatars/male-teen-police/left-thigh.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-leg" data-part="left-calf" src="/avatars/male-teen-police/left-calf.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-leg" data-part="right-thigh" src="/avatars/male-teen-police/right-thigh.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-leg" data-part="right-calf" src="/avatars/male-teen-police/right-calf.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-arm" data-part="left-upper-arm" src="/avatars/male-teen-police/left-upper-arm.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-arm" data-part="left-lower-arm" src="/avatars/male-teen-police/left-lower-arm.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-arm" data-part="right-upper-arm" src="/avatars/male-teen-police/right-upper-arm.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-arm" data-part="right-lower-arm" src="/avatars/male-teen-police/right-lower-arm.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-pelvis" data-part="pelvis" src="/avatars/male-teen-police/pelvis.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-torso" data-part="torso" src="/avatars/male-teen-police/torso.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-head" data-part="head" src="/avatars/male-teen-police/head.png" alt="" draggable="false" />
+              </div>
+              <canvas id="pose-overlay" aria-hidden="true"></canvas>
+              <div id="pose-readiness" class="pose-readiness" data-state="loading">
+                <span class="pose-readiness-dot" aria-hidden="true"></span>
+                <div>
+                  <small>MEDIAPIPE POSE</small>
+                  <strong id="pose-message">포즈 모델을 준비하고 있습니다.</strong>
+                </div>
+              </div>
+              <div id="camera-error" class="camera-error" hidden>
+                <strong>카메라를 연결할 수 없습니다.</strong>
+                <p>브라우저의 카메라 권한을 확인한 뒤 다시 시도해주세요.</p>
+                <button id="retry-camera" type="button">카메라 다시 연결</button>
+              </div>
+            </div>
+
+            <div id="result-stage" class="result-stage" hidden>
+              <img id="capture-preview" alt="촬영한 사용자 사진" />
+              <div class="result-overlay">
+                <span>CAPTURE COMPLETE</span>
+                <strong>포즈와 아바타 옵션이 안전하게 저장됐어요.</strong>
+                <small id="session-label"></small>
+              </div>
+            </div>
+
+            <div class="camera-foot">
+              <p id="camera-help">카메라 연결 후 아바타 옵션을 선택하세요.</p>
+              <button id="retake-button" class="retake-button" type="button" hidden>
+                다시 촬영하기
+              </button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <canvas id="capture-canvas" hidden></canvas>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

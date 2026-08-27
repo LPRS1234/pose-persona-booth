@@ -1,0 +1,17 @@
+{
+  "name": "pose-persona-booth",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare-assets": "node scripts/copy-mediapipe-assets.mjs",
+    "dev": "npm run prepare-assets && vite",
+    "build": "npm run prepare-assets && vite build"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "1.0.1"
+  },
+  "devDependencies": {
+    "vite": "8.2.2"
+  }
+}
