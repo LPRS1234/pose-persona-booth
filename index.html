@@ -28,7 +28,7 @@
           <div class="step-label">CREATE YOUR CHARACTER</div>
           <h1>당신의 페르소나를<br />선택하세요</h1>
           <p class="lead">
-            성별, 나이, 직업을 선택하면 나만의 사이버펑크 아바타가 완성됩니다.
+            성별과 직업을 선택하면 나만의 사이버펑크 아바타가 완성됩니다.
           </p>
 
           <form id="capture-form" novalidate>
@@ -48,29 +48,7 @@
               </fieldset>
 
               <fieldset class="option-group">
-                <legend><span>02</span> 나이</legend>
-                <div class="option-grid option-grid--four">
-                  <label class="option-card">
-                    <input type="radio" name="age" value="teen" />
-                    <span>청소년</span>
-                  </label>
-                  <label class="option-card">
-                    <input type="radio" name="age" value="young" />
-                    <span>청년</span>
-                  </label>
-                  <label class="option-card">
-                    <input type="radio" name="age" value="middle" />
-                    <span>중년</span>
-                  </label>
-                  <label class="option-card">
-                    <input type="radio" name="age" value="senior" />
-                    <span>노년</span>
-                  </label>
-                </div>
-              </fieldset>
-
-              <fieldset class="option-group">
-                <legend><span>03</span> 직업</legend>
+                <legend><span>02</span> 직업</legend>
                 <div class="option-grid option-grid--three">
                   <label class="option-card">
                     <input type="radio" name="profession" value="police" />
@@ -129,7 +107,6 @@
                 <img class="avatar-part avatar-image avatar-torso" data-part="torso" src="/avatars/male-teen-police/torso.png" alt="" draggable="false" />
                 <img class="avatar-part avatar-image avatar-head" data-part="head" src="/avatars/male-teen-police/head.png" alt="" draggable="false" />
               </div>
-              <canvas id="pose-overlay" aria-hidden="true"></canvas>
               <div id="pose-readiness" class="pose-readiness" data-state="loading">
                 <span class="pose-readiness-dot" aria-hidden="true"></span>
                 <div>

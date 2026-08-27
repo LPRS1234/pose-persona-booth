@@ -180,10 +180,6 @@ h1 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.option-grid--four {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
 .option-card {
   position: relative;
   cursor: pointer;
@@ -335,16 +331,14 @@ h1 {
 }
 
 #camera-video,
-#capture-preview,
-#pose-overlay {
+#capture-preview {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
 #camera-video,
-#avatar-overlay,
-#pose-overlay {
+#avatar-overlay {
   transform: scaleX(-1);
 }
 
@@ -371,10 +365,14 @@ h1 {
   will-change: left, top, width, height, transform;
 }
 
-.avatar-arm,
 .avatar-leg,
 .avatar-pelvis {
   z-index: 1;
+  transform-origin: 0 50%;
+}
+
+.avatar-arm {
+  z-index: 4;
   transform-origin: 0 50%;
 }
 
@@ -387,14 +385,7 @@ h1 {
 }
 
 .avatar-head {
-  z-index: 4;
-}
-
-#pose-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
+  z-index: 5;
 }
 
 #capture-preview {
@@ -621,10 +612,6 @@ h1 {
   .camera-card,
   .capture-button {
     border-radius: 16px;
-  }
-
-  .option-grid--four {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

@@ -21,7 +21,6 @@ const avatarParts = Object.fromEntries(
     element,
   ]),
 );
-const poseOverlay = document.querySelector("#pose-overlay");
 const poseReadiness = document.querySelector("#pose-readiness");
 const poseMessage = document.querySelector("#pose-message");
 
@@ -31,16 +30,12 @@ const POSE_INTERVAL_MS = 80;
 const STABLE_FRAME_COUNT = 6;
 const AVATAR_SMOOTHING = 0.35;
 const AVATAR_CONFIDENCE = 0.3;
-const SUPPORTED_AVATAR_KEY = "male-teen-police";
+const SUPPORTED_AVATAR_KEY = "male-police";
 
 const poseInputCanvas = document.createElement("canvas");
 poseInputCanvas.width = POSE_INPUT_WIDTH;
 poseInputCanvas.height = POSE_INPUT_HEIGHT;
 const poseInputContext = poseInputCanvas.getContext("2d", { alpha: false });
-
-poseOverlay.width = POSE_INPUT_WIDTH;
-poseOverlay.height = POSE_INPUT_HEIGHT;
-const poseOverlayContext = poseOverlay.getContext("2d");
 
 const poseWorker = new Worker(new URL("./pose-worker.js", import.meta.url));
 
@@ -50,7 +45,6 @@ let captureInProgress = false;
 let showingResult = false;
 let poseWorkerReady = false;
 let poseWorkerBusy = false;
-let poseConnections = [];
 let poseReady = false;
 let stablePoseFrames = 0;
 let lastPoseFrameAt = 0;
@@ -59,20 +53,18 @@ let smoothedLandmarks = null;
 function getAvatarOptions() {
   return {
     gender: form.elements.gender.value || null,
-    age: form.elements.age.value || null,
     profession: form.elements.profession.value || null,
   };
 }
 
 function getMissingOption(options) {
   if (!options.gender) return { name: "gender", label: "성별" };
-  if (!options.age) return { name: "age", label: "나이" };
   if (!options.profession) return { name: "profession", label: "직업" };
   return null;
 }
 
 function buildAvatarKey(options) {
-  return `${options.gender}-${options.age}-${options.profession}`;
+  return `${options.gender}-${options.profession}`;
 }
 
 function updateButtonState() {
@@ -121,14 +113,9 @@ function setPoseState(message, state) {
 function resetPoseTracking(message, state = "missing") {
   poseReady = false;
   stablePoseFrames = 0;
-  clearPoseOverlay();
   clearAvatarOverlay(true);
   setPoseState(message, state);
   updateButtonState();
-}
-
-function clearPoseOverlay() {
-  poseOverlayContext.clearRect(0, 0, poseOverlay.width, poseOverlay.height);
 }
 
 function landmarkConfidence(landmark) {
@@ -165,7 +152,7 @@ function updateAvatarTheme() {
 
   if (!isSupportedAvatar(options)) {
     clearAvatarOverlay();
-    formMessage.textContent = "현재 남성 · 청소년 · 경찰 아바타만 준비되어 있습니다.";
+    formMessage.textContent = "현재 남성 · 경찰 아바타만 준비되어 있습니다.";
     return;
   }
 
@@ -210,7 +197,17 @@ function getImageAspectRatio(element, fallback = 1) {
   return element.naturalWidth / element.naturalHeight;
 }
 
-function updateSegment(element, start, end, paddingRatio = 0.08) {
+function updateSegment(
+  element,
+  start,
+  end,
+  {
+    startPaddingRatio = 0.08,
+    endPaddingRatio = startPaddingRatio,
+    thicknessScale = 1,
+    minThickness = 0,
+  } = {},
+) {
   if (!element || !start || !end) {
     setPartVisibility(element, false);
     return false;
@@ -224,14 +221,18 @@ function updateSegment(element, start, end, paddingRatio = 0.08) {
     return false;
   }
 
-  const padding = baseLength * paddingRatio;
+  const startPadding = baseLength * startPaddingRatio;
+  const endPadding = baseLength * endPaddingRatio;
   const unitX = dx / baseLength;
   const unitY = dy / baseLength;
-  const length = baseLength + padding * 2;
-  const thickness = length / getImageAspectRatio(element, 3);
+  const length = baseLength + startPadding + endPadding;
+  const thickness = Math.max(
+    (length / getImageAspectRatio(element, 3)) * thicknessScale,
+    minThickness,
+  );
 
-  element.style.left = `${start.x - unitX * padding}px`;
-  element.style.top = `${start.y - unitY * padding}px`;
+  element.style.left = `${start.x - unitX * startPadding}px`;
+  element.style.top = `${start.y - unitY * startPadding}px`;
   element.style.width = `${length}px`;
   element.style.height = `${thickness}px`;
   element.style.transform = `translateY(-50%) rotate(${Math.atan2(dy, dx)}rad)`;
@@ -303,8 +304,8 @@ function renderAvatar(landmarks) {
     rightShoulder.y - leftShoulder.y,
   );
   const shoulderAngle = Math.atan2(
-    rightShoulder.y - leftShoulder.y,
-    rightShoulder.x - leftShoulder.x,
+    leftShoulder.y - rightShoulder.y,
+    leftShoulder.x - rightShoulder.x,
   );
   const shoulderCenter = {
     x: (leftShoulder.x + rightShoulder.x) / 2,
@@ -317,17 +318,67 @@ function renderAvatar(landmarks) {
     shoulderWidth * 1.55,
     shoulderAngle,
     0.5,
-    0.04,
+    0.08,
   );
-  updateSegment(avatarParts["left-upper-arm"], leftShoulder, leftElbow, 0.22);
-  updateSegment(avatarParts["left-lower-arm"], leftElbow, leftWrist, 0.18);
-  updateSegment(avatarParts["right-upper-arm"], rightShoulder, rightElbow, 0.22);
-  updateSegment(avatarParts["right-lower-arm"], rightElbow, rightWrist, 0.18);
-  updateSegment(avatarParts.pelvis, leftHip, rightHip, 0.25);
-  updateSegment(avatarParts["left-thigh"], leftHip, leftKnee, 0.22);
-  updateSegment(avatarParts["left-calf"], leftKnee, leftAnkle, 0.18);
-  updateSegment(avatarParts["right-thigh"], rightHip, rightKnee, 0.22);
-  updateSegment(avatarParts["right-calf"], rightKnee, rightAnkle, 0.18);
+  const upperArmOptions = {
+    startPaddingRatio: 0.24,
+    endPaddingRatio: 0.3,
+    thicknessScale: 1.35,
+    minThickness: shoulderWidth * 0.2,
+  };
+  const lowerArmOptions = {
+    startPaddingRatio: 0.3,
+    endPaddingRatio: 0.28,
+    thicknessScale: 1.3,
+    minThickness: shoulderWidth * 0.18,
+  };
+  const thighOptions = {
+    startPaddingRatio: 0.24,
+    endPaddingRatio: 0.32,
+    thicknessScale: 1.45,
+    minThickness: shoulderWidth * 0.28,
+  };
+  const calfOptions = {
+    startPaddingRatio: 0.32,
+    endPaddingRatio: 0.28,
+    thicknessScale: 1.35,
+    minThickness: shoulderWidth * 0.22,
+  };
+
+  updateSegment(
+    avatarParts["left-upper-arm"],
+    leftShoulder,
+    leftElbow,
+    upperArmOptions,
+  );
+  updateSegment(
+    avatarParts["left-lower-arm"],
+    leftElbow,
+    leftWrist,
+    lowerArmOptions,
+  );
+  updateSegment(
+    avatarParts["right-upper-arm"],
+    rightShoulder,
+    rightElbow,
+    upperArmOptions,
+  );
+  updateSegment(
+    avatarParts["right-lower-arm"],
+    rightElbow,
+    rightWrist,
+    lowerArmOptions,
+  );
+  updateSegment(avatarParts.pelvis, leftHip, rightHip, {
+    startPaddingRatio: 0.25,
+    endPaddingRatio: 0.25,
+    thicknessScale: 1.12,
+    minThickness: shoulderWidth * 0.25,
+  });
+  updateSegment(avatarParts["left-thigh"], leftHip, leftKnee, thighOptions);
+  updateSegment(avatarParts["left-calf"], leftKnee, leftAnkle, calfOptions);
+  updateSegment(avatarParts["right-thigh"], rightHip, rightKnee, thighOptions);
+  updateSegment(avatarParts["right-calf"], rightKnee, rightAnkle, calfOptions);
 
   if (leftEar && rightEar) {
     const earDistance = Math.hypot(
@@ -339,21 +390,29 @@ function renderAvatar(landmarks) {
       y: (leftEar.y + rightEar.y) / 2,
     };
     const headWidth = clamp(
-      earDistance * 2.05,
-      shoulderWidth * 0.9,
+      earDistance * 2.35,
       shoulderWidth * 1.25,
+      shoulderWidth * 1.55,
     );
-    const raisedHeadCenter = {
+    const headOriginY = 0.52;
+    const headHeight = headWidth / getImageAspectRatio(avatarParts.head);
+    const connectionFloorY =
+      shoulderCenter.y + shoulderWidth * 0.02 - headHeight * (1 - headOriginY);
+    const connectedHeadCenter = {
       x: headCenter.x,
-      y: headCenter.y - headWidth * 0.12,
+      y: clamp(
+        connectionFloorY,
+        headCenter.y,
+        headCenter.y + headHeight * 0.08,
+      ),
     };
     updateAnchoredImage(
       avatarParts.head,
-      raisedHeadCenter,
+      connectedHeadCenter,
       headWidth,
-      Math.atan2(rightEar.y - leftEar.y, rightEar.x - leftEar.x),
+      Math.atan2(leftEar.y - rightEar.y, leftEar.x - rightEar.x),
       0.5,
-      0.52,
+      headOriginY,
     );
   } else {
     setPartVisibility(avatarParts.head, false);
@@ -370,46 +429,6 @@ function inspectPose(landmarks) {
   return { valid: true, message: "자세를 잠시 유지해주세요." };
 }
 
-function drawPose(landmarks) {
-  clearPoseOverlay();
-  if (!landmarks) return;
-
-  const width = poseOverlay.width;
-  const height = poseOverlay.height;
-  const lineColor = poseReady ? "#8de09b" : "#ff9f65";
-  const pointColor = poseReady ? "#e9ffed" : "#fff3e8";
-
-  poseOverlayContext.save();
-  poseOverlayContext.lineCap = "round";
-  poseOverlayContext.lineJoin = "round";
-  poseOverlayContext.lineWidth = 4;
-  poseOverlayContext.strokeStyle = lineColor;
-  poseOverlayContext.shadowBlur = 9;
-  poseOverlayContext.shadowColor = lineColor;
-
-  for (const connection of poseConnections) {
-    const start = landmarks[connection.start];
-    const end = landmarks[connection.end];
-    if (!start || !end) continue;
-    if (landmarkConfidence(start) < 0.25 || landmarkConfidence(end) < 0.25) continue;
-
-    poseOverlayContext.beginPath();
-    poseOverlayContext.moveTo(start.x * width, start.y * height);
-    poseOverlayContext.lineTo(end.x * width, end.y * height);
-    poseOverlayContext.stroke();
-  }
-
-  poseOverlayContext.fillStyle = pointColor;
-  poseOverlayContext.shadowBlur = 7;
-  for (const landmark of landmarks) {
-    if (landmarkConfidence(landmark) < 0.25) continue;
-    poseOverlayContext.beginPath();
-    poseOverlayContext.arc(landmark.x * width, landmark.y * height, 3.2, 0, Math.PI * 2);
-    poseOverlayContext.fill();
-  }
-  poseOverlayContext.restore();
-}
-
 function handlePoseResult(landmarks) {
   const inspection = inspectPose(landmarks);
   if (!inspection.valid) {
@@ -417,7 +436,6 @@ function handlePoseResult(landmarks) {
     poseReady = false;
     clearAvatarOverlay(true);
     setPoseState(inspection.message, "missing");
-    drawPose(landmarks);
     updateButtonState();
     return;
   }
@@ -433,7 +451,6 @@ function handlePoseResult(landmarks) {
       "loading",
     );
   }
-  drawPose(landmarks);
   updateButtonState();
 }
 
@@ -656,7 +673,6 @@ poseWorker.addEventListener("message", (event) => {
   const { type } = event.data;
   if (type === "READY") {
     poseWorkerReady = true;
-    poseConnections = event.data.connections ?? [];
     setPoseState(
       cameraReady
         ? "포즈 모델 준비 완료 — 촬영할 수 있습니다."
