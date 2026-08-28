@@ -39,6 +39,9 @@ const STABLE_FRAME_COUNT = 6;
 const AVATAR_SMOOTHING = 0.35;
 const AVATAR_CONFIDENCE = 0.3;
 const SUPPORTED_AVATAR_KEY = "male-police";
+const AVATAR_PREVIEW_POSE = new URLSearchParams(window.location.search).get(
+  "avatarPreview",
+);
 const BACKGROUND_IMAGES = {
   "neon-alley": "/backgrounds/neon-alley.png",
   "police-command-center": "/backgrounds/police-command-center.png",
@@ -52,13 +55,43 @@ const AVATAR_DRAW_ORDER = [
   "right-thigh",
   "right-calf",
   "pelvis",
-  "torso",
   "left-upper-arm",
-  "left-lower-arm",
   "right-upper-arm",
+  "torso",
+  "left-lower-arm",
   "right-lower-arm",
+  "left-fist",
+  "right-fist",
   "head",
 ];
+
+const AVATAR_PART_LAYOUT = Object.freeze({
+  upperArm: {
+    startConnectorRatio: 0.16,
+    endConnectorRatio: 0.94,
+    thicknessScale: 0.88,
+  },
+  lowerArm: {
+    startConnectorRatio: 0.12,
+    endConnectorRatio: 0.94,
+    thicknessScale: 0.84,
+  },
+  thigh: {
+    startConnectorRatio: 0.1,
+    endConnectorRatio: 0.9,
+    thicknessScale: 0.96,
+  },
+  calf: {
+    startConnectorRatio: 0.12,
+    endConnectorRatio: 0.94,
+    thicknessScale: 0.88,
+  },
+  pelvis: {
+    startConnectorRatio: 0.14,
+    endConnectorRatio: 0.86,
+    thicknessScale: 1,
+  },
+});
 
 const poseInputCanvas = document.createElement("canvas");
 poseInputCanvas.width = POSE_INPUT_WIDTH;
@@ -210,6 +243,83 @@ function updateAvatarTheme() {
   }
 }
 
+function createAvatarPreviewLandmarks(poseName) {
+  const landmarks = Array.from({ length: 33 }, () => ({
+    x: 0.5,
+    y: 0.2,
+    z: 0,
+    visibility: 1,
+    presence: 1,
+  }));
+  const place = (index, x, y) => {
+    landmarks[index] = { ...landmarks[index], x, y };
+  };
+
+  place(0, 0.5, 0.12);
+  place(7, 0.535, 0.16);
+  place(8, 0.465, 0.16);
+  place(11, 0.6, 0.28);
+  place(12, 0.4, 0.28);
+  place(23, 0.555, 0.54);
+  place(24, 0.445, 0.54);
+  place(25, 0.565, 0.72);
+  place(26, 0.435, 0.72);
+  place(27, 0.575, 0.89);
+  place(28, 0.425, 0.89);
+  place(29, 0.57, 0.915);
+  place(30, 0.43, 0.915);
+  place(31, 0.59, 0.95);
+  place(32, 0.41, 0.95);
+
+  if (poseName === "bent") {
+    place(13, 0.7, 0.36);
+    place(14, 0.3, 0.36);
+    place(15, 0.62, 0.46);
+    place(16, 0.38, 0.46);
+    place(17, 0.595, 0.49);
+    place(18, 0.405, 0.49);
+    place(19, 0.6, 0.5);
+    place(20, 0.4, 0.5);
+    place(21, 0.61, 0.49);
+    place(22, 0.39, 0.49);
+  } else if (poseName === "neutral") {
+    place(13, 0.63, 0.42);
+    place(14, 0.37, 0.42);
+    place(15, 0.61, 0.58);
+    place(16, 0.39, 0.58);
+    place(17, 0.605, 0.62);
+    place(18, 0.395, 0.62);
+    place(19, 0.61, 0.625);
+    place(20, 0.39, 0.625);
+    place(21, 0.615, 0.615);
+    place(22, 0.385, 0.615);
+  } else {
+    place(13, 0.72, 0.28);
+    place(14, 0.28, 0.28);
+    place(15, 0.84, 0.28);
+    place(16, 0.16, 0.28);
+    place(17, 0.875, 0.28);
+    place(18, 0.125, 0.28);
+    place(19, 0.88, 0.28);
+    place(20, 0.12, 0.28);
+    place(21, 0.87, 0.27);
+    place(22, 0.13, 0.27);
+  }
+
+  return landmarks;
+}
+
+async function renderAvatarPreview(poseName) {
+  form.elements.gender.value = "male";
+  form.elements.profession.value = "police";
+  updateOptions();
+  await Promise.all(Object.values(avatarParts).map(waitForImage));
+  renderAvatar(createAvatarPreviewLandmarks(poseName));
+  cameraStatus.className = "camera-status is-ready";
+  cameraStatus.lastChild.textContent = " 미리보기";
+  cameraHelp.textContent = "아바타 파츠 연결을 확인하는 개발용 미리보기입니다.";
+}
+
 function smoothLandmarks(landmarks) {
   if (!smoothedLandmarks || smoothedLandmarks.length !== landmarks.length) {
     smoothedLandmarks = landmarks.map((landmark) => ({ ...landmark }));
@@ -255,10 +365,12 @@ function updateSegment(
   start,
   end,
   {
-    startPaddingRatio = 0.08,
-    endPaddingRatio = startPaddingRatio,
+    startConnectorRatio = 0,
+    endConnectorRatio = 1,
     thicknessScale = 1,
     minThickness = 0,
+    maxThickness = Number.POSITIVE_INFINITY,
+    flipY = false,
   } = {},
 ) {
   if (!element || !start || !end) {
@@ -274,28 +386,38 @@ function updateSegment(
     return false;
   }
 
-  const startPadding = baseLength * startPaddingRatio;
-  const endPadding = baseLength * endPaddingRatio;
+  const connectorSpan = endConnectorRatio - startConnectorRatio;
+  if (connectorSpan <= 0.05) {
+    setPartVisibility(element, false);
+    return false;
+  }
+
   const unitX = dx / baseLength;
   const unitY = dy / baseLength;
-  const length = baseLength + startPadding + endPadding;
-  const thickness = Math.max(
+  const length = baseLength / connectorSpan;
+  const startOffset = length * startConnectorRatio;
+  const thickness = clamp(
     (length / getImageAspectRatio(element, 3)) * thicknessScale,
     minThickness,
+    maxThickness,
   );
+  const imageX = start.x - unitX * startOffset;
+  const imageY = start.y - unitY * startOffset;
+  const angle = Math.atan2(dy, dx);
 
-  element.style.left = `${start.x - unitX * startPadding}px`;
-  element.style.top = `${start.y - unitY * startPadding}px`;
+  element.style.left = `${imageX}px`;
+  element.style.top = `${imageY}px`;
   element.style.width = `${length}px`;
   element.style.height = `${thickness}px`;
-  element.style.transform = `translateY(-50%) rotate(${Math.atan2(dy, dx)}rad)`;
+  element.style.transform = `translateY(-50%) rotate(${angle}rad) scaleY(${flipY ? -1 : 1})`;
   avatarPartGeometry.set(element, {
     type: "segment",
-    x: start.x - unitX * startPadding,
-    y: start.y - unitY * startPadding,
+    x: imageX,
+    y: imageY,
     width: length,
     height: thickness,
-    angle: Math.atan2(dy, dx),
+    angle,
+    flipY,
   });
   setPartVisibility(element, true);
   return true;
@@ -380,6 +502,60 @@ function updateFoot(element, knee, ankle, heel, toe, shoulderWidth) {
   );
 }
 
+function averagePoint(points) {
+  const visiblePoints = points.filter(Boolean);
+  if (!visiblePoints.length) return null;
+  return {
+    x:
+      visiblePoints.reduce((total, point) => total + point.x, 0) /
+      visiblePoints.length,
+    y:
+      visiblePoints.reduce((total, point) => total + point.y, 0) /
+      visiblePoints.length,
+  };
+}
+
+function updateFist(
+  element,
+  elbow,
+  wrist,
+  indexFinger,
+  pinky,
+  thumb,
+  shoulderWidth,
+) {
+  if (!element || !elbow || !wrist) {
+    setPartVisibility(element, false);
+    return false;
+  }
+
+  const forearmX = wrist.x - elbow.x;
+  const forearmY = wrist.y - elbow.y;
+  const forearmLength = Math.hypot(forearmX, forearmY);
+  if (forearmLength < 2) {
+    setPartVisibility(element, false);
+    return false;
+  }
+
+  const handCenter = averagePoint([indexFinger, pinky, thumb]);
+  let directionX = handCenter ? handCenter.x - wrist.x : forearmX;
+  let directionY = handCenter ? handCenter.y - wrist.y : forearmY;
+
+  if (Math.hypot(directionX, directionY) < shoulderWidth * 0.04) {
+    directionX = forearmX;
+    directionY = forearmY;
+  }
+
+  const imageWidth = clamp(
+    forearmLength * 0.28,
+    shoulderWidth * 0.2,
+    shoulderWidth * 0.3,
+  );
+  const angle = Math.atan2(directionY, directionX) - Math.PI / 2;
+
+  return updateAnchoredImage(element, wrist, imageWidth, angle, 0.5, 0.12);
+}
+
 function renderAvatar(landmarks) {
   const options = getAvatarOptions();
   if (!isSupportedAvatar(options) || !avatarImagesReady() || !landmarks) {
@@ -403,6 +579,12 @@ function renderAvatar(landmarks) {
   const rightElbow = point(14);
   const leftWrist = point(15);
   const rightWrist = point(16);
+  const leftPinky = point(17);
+  const rightPinky = point(18);
+  const leftIndex = point(19);
+  const rightIndex = point(20);
+  const leftThumb = point(21);
+  const rightThumb = point(22);
   const leftHip = point(23);
   const rightHip = point(24);
   const leftKnee = point(25);
@@ -435,47 +617,43 @@ function renderAvatar(landmarks) {
   updateAnchoredImage(
     avatarParts.torso,
     shoulderCenter,
-    shoulderWidth * 1.55,
+    shoulderWidth * 1.25,
     shoulderAngle,
     0.5,
-    0.08,
+    0.17,
   );
   const upperArmOptions = {
-    startPaddingRatio: 0.24,
-    endPaddingRatio: 0.3,
-    thicknessScale: 1.35,
-    minThickness: shoulderWidth * 0.2,
+    ...AVATAR_PART_LAYOUT.upperArm,
+    minThickness: shoulderWidth * 0.16,
+    maxThickness: shoulderWidth * 0.27,
   };
   const lowerArmOptions = {
-    startPaddingRatio: 0.3,
-    endPaddingRatio: 0.28,
-    thicknessScale: 1.3,
-    minThickness: shoulderWidth * 0.18,
+    ...AVATAR_PART_LAYOUT.lowerArm,
+    minThickness: shoulderWidth * 0.14,
+    maxThickness: shoulderWidth * 0.23,
   };
   const thighOptions = {
-    startPaddingRatio: 0.24,
-    endPaddingRatio: 0.32,
-    thicknessScale: 1.45,
-    minThickness: shoulderWidth * 0.28,
+    ...AVATAR_PART_LAYOUT.thigh,
+    minThickness: shoulderWidth * 0.27,
+    maxThickness: shoulderWidth * 0.4,
   };
   const calfOptions = {
-    startPaddingRatio: 0.32,
-    endPaddingRatio: 0.28,
-    thicknessScale: 1.35,
-    minThickness: shoulderWidth * 0.22,
+    ...AVATAR_PART_LAYOUT.calf,
+    minThickness: shoulderWidth * 0.23,
+    maxThickness: shoulderWidth * 0.33,
   };
 
   updateSegment(
     avatarParts["left-upper-arm"],
     leftShoulder,
     leftElbow,
-    upperArmOptions,
+    { ...upperArmOptions, flipY: true },
   );
   updateSegment(
     avatarParts["left-lower-arm"],
     leftElbow,
     leftWrist,
-    lowerArmOptions,
+    { ...lowerArmOptions, flipY: true },
   );
   updateSegment(
     avatarParts["right-upper-arm"],
@@ -490,13 +668,18 @@ function renderAvatar(landmarks) {
     lowerArmOptions,
   );
   updateSegment(avatarParts.pelvis, leftHip, rightHip, {
-    startPaddingRatio: 0.25,
-    endPaddingRatio: 0.25,
-    thicknessScale: 1.12,
-    minThickness: shoulderWidth * 0.25,
+    ...AVATAR_PART_LAYOUT.pelvis,
+    minThickness: shoulderWidth * 0.3,
+    maxThickness: shoulderWidth * 0.48,
   });
-  updateSegment(avatarParts["left-thigh"], leftHip, leftKnee, thighOptions);
-  updateSegment(avatarParts["left-calf"], leftKnee, leftAnkle, calfOptions);
+  updateSegment(avatarParts["left-thigh"], leftHip, leftKnee, {
+    ...thighOptions,
+    flipY: true,
+  });
+  updateSegment(avatarParts["left-calf"], leftKnee, leftAnkle, {
+    ...calfOptions,
+    flipY: true,
+  });
   updateSegment(avatarParts["right-thigh"], rightHip, rightKnee, thighOptions);
   updateSegment(avatarParts["right-calf"], rightKnee, rightAnkle, calfOptions);
   updateFoot(
@@ -515,6 +698,24 @@ function renderAvatar(landmarks) {
     rightToe,
     shoulderWidth,
   );
+  updateFist(
+    avatarParts["left-fist"],
+    leftElbow,
+    leftWrist,
+    leftIndex,
+    leftPinky,
+    leftThumb,
+    shoulderWidth,
+  );
+  updateFist(
+    avatarParts["right-fist"],
+    rightElbow,
+    rightWrist,
+    rightIndex,
+    rightPinky,
+    rightThumb,
+    shoulderWidth,
+  );
 
   if (leftEar && rightEar) {
     const earDistance = Math.hypot(
@@ -526,27 +727,47 @@ function renderAvatar(landmarks) {
       y: (leftEar.y + rightEar.y) / 2,
     };
     const headWidth = clamp(
-      earDistance * 2.35,
-      shoulderWidth * 1.25,
-      shoulderWidth * 1.55,
+      earDistance * 2.25,
+      shoulderWidth * 0.58,
+      shoulderWidth * 0.76,
     );
-    const headOriginY = 0.52;
+    const headOriginY = 0.4;
+    const headConnectorY = 0.78;
     const headHeight = headWidth / getImageAspectRatio(avatarParts.head);
-    const connectionFloorY =
-      shoulderCenter.y + shoulderWidth * 0.02 - headHeight * (1 - headOriginY);
+    const headAngle = Math.atan2(
+      leftEar.y - rightEar.y,
+      leftEar.x - rightEar.x,
+    );
+    const shoulderDown = {
+      x: -Math.sin(shoulderAngle),
+      y: Math.cos(shoulderAngle),
+    };
+    const neckTarget = {
+      x: shoulderCenter.x - shoulderDown.x * shoulderWidth * 0.1,
+      y: shoulderCenter.y - shoulderDown.y * shoulderWidth * 0.1,
+    };
+    const connectorDistance = headHeight * (headConnectorY - headOriginY);
+    const connectedAnchor = {
+      x: neckTarget.x + Math.sin(headAngle) * connectorDistance,
+      y: neckTarget.y - Math.cos(headAngle) * connectorDistance,
+    };
     const connectedHeadCenter = {
-      x: headCenter.x,
+      x: clamp(
+        connectedAnchor.x,
+        headCenter.x - headWidth * 0.08,
+        headCenter.x + headWidth * 0.08,
+      ),
       y: clamp(
-        connectionFloorY,
-        headCenter.y,
-        headCenter.y + headHeight * 0.08,
+        connectedAnchor.y,
+        headCenter.y - headHeight * 0.08,
+        headCenter.y + headHeight * 0.12,
       ),
     };
     updateAnchoredImage(
       avatarParts.head,
       connectedHeadCenter,
       headWidth,
-      Math.atan2(leftEar.y - rightEar.y, leftEar.x - rightEar.x),
+      headAngle,
       0.5,
       headOriginY,
     );
@@ -749,6 +970,9 @@ function drawAvatarPart(context, image, geometry, scale) {
   context.save();
   context.translate(geometry.x, geometry.y);
   context.rotate(geometry.angle);
+  if (geometry.flipY) {
+    context.scale(1, -1);
+  }
   context.shadowColor = "rgba(49, 220, 255, 0.46)";
   context.shadowBlur = 5 * scale;
 
@@ -982,15 +1206,18 @@ poseWorker.addEventListener("message", (event) => {
   }
 });
 
-poseWorker.postMessage({
-  type: "INIT",
-  wasmRoot: new URL("/mediapipe/wasm", window.location.origin).href,
-  modelUrl: new URL(
-    "/models/pose_landmarker_lite.task",
-    window.location.origin,
-  ).href,
-});
-
 updateOptions();
-startCamera();
-requestAnimationFrame(poseLoop);
+if (AVATAR_PREVIEW_POSE) {
+  void renderAvatarPreview(AVATAR_PREVIEW_POSE);
+} else {
+  poseWorker.postMessage({
+    type: "INIT",
+    wasmRoot: new URL("/mediapipe/wasm", window.location.origin).href,
+    modelUrl: new URL(
+      "/models/pose_landmarker_lite.task",
+      window.location.origin,
+    ).href,
+  });
+  startCamera();
+  requestAnimationFrame(poseLoop);
+}

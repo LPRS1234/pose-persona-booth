@@ -433,8 +433,12 @@ h1 {
 }
 
 .avatar-arm {
-  z-index: 4;
+  z-index: 2;
   transform-origin: 0 50%;
+}
+
+.avatar-arm[data-part$="lower-arm"] {
+  z-index: 4;
 }
 
 .avatar-pelvis {
@@ -446,6 +450,10 @@ h1 {
 }
 
 .avatar-head {
+  z-index: 6;
+}
+
+.avatar-hand {
   z-index: 5;
 }
 
