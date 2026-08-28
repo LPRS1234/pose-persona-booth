@@ -1,3 +1,6 @@
+import QRCode from "qrcode";
+
+
 const form = document.querySelector("#capture-form");
 const optionInputs = [...form.querySelectorAll('input[type="radio"]')];
 const formMessage = document.querySelector("#form-message");
@@ -10,6 +13,9 @@ const cameraStage = document.querySelector("#camera-stage");
 const resultStage = document.querySelector("#result-stage");
 const capturePreview = document.querySelector("#capture-preview");
 const sessionLabel = document.querySelector("#session-label");
+const captureQr = document.querySelector("#capture-qr");
+const captureQrCanvas = document.querySelector("#capture-qr-canvas");
+const captureQrLink = document.querySelector("#capture-qr-link");
 const cameraStatus = document.querySelector("#camera-status");
 const cameraHelp = document.querySelector("#camera-help");
 const cameraError = document.querySelector("#camera-error");
@@ -39,6 +45,8 @@ const BACKGROUND_IMAGES = {
   "sunset-rooftop": "/backgrounds/sunset-rooftop.png",
 };
 const AVATAR_DRAW_ORDER = [
+  "left-foot",
+  "right-foot",
   "left-thigh",
   "left-calf",
   "right-thigh",
@@ -69,6 +77,7 @@ let poseReady = false;
 let stablePoseFrames = 0;
 let lastPoseFrameAt = 0;
 let smoothedLandmarks = null;
+let captureQrGeneration = 0;
 
 function getAvatarOptions() {
   return {
@@ -326,6 +335,51 @@ function updateAnchoredImage(
   return true;
 }
 
+function updateFoot(element, knee, ankle, heel, toe, shoulderWidth) {
+  if (!element || !knee || !ankle || !toe) {
+    setPartVisibility(element, false);
+    return false;
+  }
+
+  const calfLength = Math.hypot(ankle.x - knee.x, ankle.y - knee.y);
+  if (calfLength < 2) {
+    setPartVisibility(element, false);
+    return false;
+  }
+
+  const footTarget = heel
+    ? {
+        x: heel.x * 0.2 + toe.x * 0.8,
+        y: heel.y * 0.2 + toe.y * 0.8,
+      }
+    : toe;
+  const directionX = footTarget.x - ankle.x;
+  const directionY = footTarget.y - ankle.y;
+  if (Math.hypot(directionX, directionY) < 2) {
+    setPartVisibility(element, false);
+    return false;
+  }
+
+  // 발 이미지는 위(발목)에서 아래(발끝)로 그려져 있으므로 세로축을
+  // MediaPipe의 발목-발끝 방향에 맞춘다. 뒤꿈치는 발끝 방향의
+  // 순간적인 흔들림만 완화하도록 작은 비율로 섞는다.
+  const angle = Math.atan2(directionY, directionX) - Math.PI / 2;
+  const imageWidth = clamp(
+    calfLength * 0.34,
+    shoulderWidth * 0.38,
+    shoulderWidth * 0.55,
+  );
+
+  return updateAnchoredImage(
+    element,
+    ankle,
+    imageWidth,
+    angle,
+    0.5,
+    0.08,
+  );
+}
+
 function renderAvatar(landmarks) {
   const options = getAvatarOptions();
   if (!isSupportedAvatar(options) || !avatarImagesReady() || !landmarks) {
@@ -355,6 +409,10 @@ function renderAvatar(landmarks) {
   const rightKnee = point(26);
   const leftAnkle = point(27);
   const rightAnkle = point(28);
+  const leftHeel = point(29);
+  const rightHeel = point(30);
+  const leftToe = point(31);
+  const rightToe = point(32);
 
   if (!leftShoulder || !rightShoulder) {
     clearAvatarOverlay();
@@ -441,6 +499,22 @@ function renderAvatar(landmarks) {
   updateSegment(avatarParts["left-calf"], leftKnee, leftAnkle, calfOptions);
   updateSegment(avatarParts["right-thigh"], rightHip, rightKnee, thighOptions);
   updateSegment(avatarParts["right-calf"], rightKnee, rightAnkle, calfOptions);
+  updateFoot(
+    avatarParts["left-foot"],
+    leftKnee,
+    leftAnkle,
+    leftHeel,
+    leftToe,
+    shoulderWidth,
+  );
+  updateFoot(
+    avatarParts["right-foot"],
+    rightKnee,
+    rightAnkle,
+    rightHeel,
+    rightToe,
+    shoulderWidth,
+  );
 
   if (leftEar && rightEar) {
     const earDistance = Math.hypot(
@@ -769,23 +843,60 @@ async function saveCapture(frame) {
   return payload;
 }
 
+function resetCaptureQr() {
+  captureQrGeneration += 1;
+  captureQr.hidden = true;
+  captureQrLink.removeAttribute("href");
+  const context = captureQrCanvas.getContext("2d");
+  context.clearRect(0, 0, captureQrCanvas.width, captureQrCanvas.height);
+}
+
+async function renderCaptureQr(payload) {
+  resetCaptureQr();
+  const generation = captureQrGeneration;
+  const sharePath = payload.share_url || payload.files?.original;
+  if (!sharePath) return;
+
+  try {
+    const shareUrl = new URL(sharePath, window.location.origin).href;
+    await QRCode.toCanvas(captureQrCanvas, shareUrl, {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 160,
+      color: {
+        dark: "#071015",
+        light: "#ffffff",
+      },
+    });
+    if (generation !== captureQrGeneration) return;
+    captureQrLink.href = shareUrl;
+    captureQr.hidden = false;
+  } catch (error) {
+    console.error("QR code error:", error);
+  }
+}
+
 function showResult(payload) {
   showingResult = true;
   resetPoseTracking("다시 촬영하려면 촬영 화면으로 돌아가세요.", "loading");
+  poseReadiness.hidden = true;
   capturePreview.src = `${payload.files.original}?v=${Date.now()}`;
   sessionLabel.textContent = `SESSION ${payload.session_id}`;
   cameraStage.hidden = true;
   resultStage.hidden = false;
   retakeButton.hidden = false;
   cameraHelp.textContent = "배경과 아바타가 합성된 최종 사진이 세션에 저장됐습니다.";
+  void renderCaptureQr(payload);
 }
 
 function resetForRetake() {
   showingResult = false;
+  poseReadiness.hidden = false;
   resultStage.hidden = true;
   cameraStage.hidden = false;
   retakeButton.hidden = true;
   capturePreview.removeAttribute("src");
+  resetCaptureQr();
   sessionLabel.textContent = "";
   formMessage.textContent = "";
   cameraHelp.textContent = "몸 전체가 보이도록 카메라 앞에 서주세요.";

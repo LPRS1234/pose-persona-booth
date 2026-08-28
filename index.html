@@ -129,6 +129,8 @@
               />
               <video id="camera-video" autoplay muted playsinline aria-hidden="true"></video>
               <div id="avatar-overlay" class="avatar-overlay" data-visible="false" aria-hidden="true">
+                <img class="avatar-part avatar-image avatar-foot" data-part="left-foot" src="/avatars/male-teen-police/left-foot.png" alt="" draggable="false" />
+                <img class="avatar-part avatar-image avatar-foot" data-part="right-foot" src="/avatars/male-teen-police/right-foot.png" alt="" draggable="false" />
                 <img class="avatar-part avatar-image avatar-leg" data-part="left-thigh" src="/avatars/male-teen-police/left-thigh.png" alt="" draggable="false" />
                 <img class="avatar-part avatar-image avatar-leg" data-part="left-calf" src="/avatars/male-teen-police/left-calf.png" alt="" draggable="false" />
                 <img class="avatar-part avatar-image avatar-leg" data-part="right-thigh" src="/avatars/male-teen-police/right-thigh.png" alt="" draggable="false" />
@@ -141,13 +143,6 @@
                 <img class="avatar-part avatar-image avatar-torso" data-part="torso" src="/avatars/male-teen-police/torso.png" alt="" draggable="false" />
                 <img class="avatar-part avatar-image avatar-head" data-part="head" src="/avatars/male-teen-police/head.png" alt="" draggable="false" />
               </div>
-              <div id="pose-readiness" class="pose-readiness" data-state="loading">
-                <span class="pose-readiness-dot" aria-hidden="true"></span>
-                <div>
-                  <small>MEDIAPIPE POSE</small>
-                  <strong id="pose-message">포즈 모델을 준비하고 있습니다.</strong>
-                </div>
-              </div>
               <div id="camera-error" class="camera-error" hidden>
                 <strong>카메라를 연결할 수 없습니다.</strong>
                 <p>브라우저의 카메라 권한을 확인한 뒤 다시 시도해주세요.</p>
@@ -157,6 +152,22 @@
 
             <div id="result-stage" class="result-stage" hidden>
               <img id="capture-preview" alt="배경과 아바타가 합성된 촬영 결과" />
+              <aside id="capture-qr" class="capture-qr" hidden>
+                <a
+                  id="capture-qr-link"
+                  class="capture-qr-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="저장된 촬영 사진 열기"
+                >
+                  <canvas id="capture-qr-canvas" width="160" height="160"></canvas>
+                </a>
+                <div>
+                  <span>PHOTO QR</span>
+                  <strong>QR로 사진 열기</strong>
+                  <small>스캔하면 저장된 사진을 볼 수 있어요.</small>
+                </div>
+              </aside>
               <div class="result-overlay">
                 <span>CAPTURE COMPLETE</span>
                 <strong>배경과 아바타가 합성된 사진을 저장했어요.</strong>
@@ -169,6 +180,13 @@
               <button id="retake-button" class="retake-button" type="button" hidden>
                 다시 촬영하기
               </button>
+            </div>
+          </div>
+          <div id="pose-readiness" class="pose-readiness" data-state="loading">
+            <span class="pose-readiness-dot" aria-hidden="true"></span>
+            <div>
+              <small>MEDIAPIPE POSE</small>
+              <strong id="pose-message">포즈 모델을 준비하고 있습니다.</strong>
             </div>
           </div>
         </section>
