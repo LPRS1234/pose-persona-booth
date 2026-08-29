@@ -1216,7 +1216,7 @@ function handlePoseResult(landmarks) {
   stablePoseFrames = Math.min(stablePoseFrames + 1, STABLE_FRAME_COUNT);
   poseReady = stablePoseFrames >= STABLE_FRAME_COUNT;
   if (poseReady) {
-    setPoseState("포즈 인식 완료 — 촬영할 수 있습니다.", "ready");
+    setPoseState("포즈 인식 완료. 촬영할 수 있습니다.", "ready");
   } else {
     setPoseState(
       `자세를 유지해주세요. ${stablePoseFrames} / ${STABLE_FRAME_COUNT}`,
@@ -1311,7 +1311,7 @@ async function startCamera() {
     cameraStatus.innerHTML = '<span aria-hidden="true"></span> 준비됨';
     cameraHelp.textContent = "몸 전체가 보이도록 카메라 앞에 서주세요.";
     if (poseWorkerReady) {
-      setPoseState("포즈 모델 준비 완료 — 촬영할 수 있습니다.", "ready");
+      setPoseState("포즈 모델 준비 완료. 촬영할 수 있습니다.", "ready");
     }
   } catch (error) {
     console.error("Camera error:", error);
@@ -1559,7 +1559,7 @@ function resetForRetake() {
   sessionLabel.textContent = "";
   formMessage.textContent = "";
   cameraHelp.textContent = "몸 전체가 보이도록 카메라 앞에 서주세요.";
-  resetPoseTracking("포즈 모델 준비 완료 — 촬영할 수 있습니다.", "ready");
+  resetPoseTracking("포즈 모델 준비 완료. 촬영할 수 있습니다.", "ready");
   updateButtonState();
 }
 
@@ -1614,7 +1614,7 @@ poseWorker.addEventListener("message", (event) => {
     poseWorkerReady = true;
     setPoseState(
       cameraReady
-        ? "포즈 모델 준비 완료 — 촬영할 수 있습니다."
+        ? "포즈 모델 준비 완료. 촬영할 수 있습니다."
         : "카메라 연결을 기다리고 있습니다.",
       cameraReady ? "ready" : "loading",
     );
