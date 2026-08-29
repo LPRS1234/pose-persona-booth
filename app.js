@@ -38,6 +38,7 @@ const POSE_INTERVAL_MS = 80;
 const STABLE_FRAME_COUNT = 6;
 const AVATAR_SMOOTHING = 0.35;
 const AVATAR_CONFIDENCE = 0.3;
+const AVATAR_DIRECTION_CONFIDENCE = 0.05;
 const SUPPORTED_AVATAR_KEY = "male-police";
 const AVATAR_PREVIEW_POSE = new URLSearchParams(window.location.search).get(
   "avatarPreview",
@@ -65,31 +66,74 @@ const AVATAR_DRAW_ORDER = [
   "head",
 ];
 
-const AVATAR_PART_LAYOUT = Object.freeze({
-  upperArm: {
-    startConnectorRatio: 0.16,
-    endConnectorRatio: 0.94,
-    thicknessScale: 0.88,
-  },
-  lowerArm: {
-    startConnectorRatio: 0.12,
-    endConnectorRatio: 0.94,
-    thicknessScale: 0.84,
-  },
-  thigh: {
-    startConnectorRatio: 0.1,
-    endConnectorRatio: 0.9,
-    thicknessScale: 0.96,
-  },
-  calf: {
-    startConnectorRatio: 0.12,
-    endConnectorRatio: 0.94,
-    thicknessScale: 0.88,
+const AVATAR_RIG = Object.freeze({
+  torso: {
+    width: 1.25,
+    originX: 0.5,
+    originY: 0.17,
+    neckAnchor: { x: 0.5, y: 0.08 },
+    waistAnchor: { x: 0.5, y: 0.9 },
   },
   pelvis: {
-    startConnectorRatio: 0.14,
-    endConnectorRatio: 0.86,
+    parentPart: "torso",
+    startAnchor: 0.14,
+    endAnchor: 0.86,
     thicknessScale: 1,
+    hipSocketSpan: 0.64,
+    overlap: 0.36,
+    minThickness: 0.3,
+    maxThickness: 0.48,
+  },
+  upperArm: {
+    parentPart: "torso",
+    startAnchor: 0.16,
+    endAnchor: 0.94,
+    thicknessScale: 0.88,
+    boneLength: 0.72,
+    sides: {
+      left: { clipStart: 0.48, clipTop: 0.3, startAnchor: 0.5 },
+      right: { clipStart: 0.44, clipTop: 0.36, startAnchor: 0.46 },
+    },
+  },
+  lowerArm: {
+    parentPart: "upperArm",
+    startAnchor: 0.12,
+    endAnchor: 0.94,
+    thicknessScale: 0.84,
+    boneLength: 0.68,
+  },
+  thigh: {
+    parentPart: "pelvis",
+    startAnchor: 0.1,
+    endAnchor: 0.9,
+    thicknessScale: 0.96,
+    boneLength: 1.03,
+  },
+  calf: {
+    parentPart: "thigh",
+    startAnchor: 0.12,
+    endAnchor: 0.94,
+    thicknessScale: 0.88,
+    boneLength: 0.98,
+  },
+  fist: {
+    parentPart: "lowerArm",
+    startAnchor: { x: 0.5, y: 0.12 },
+    width: 0.25,
+  },
+  foot: {
+    parentPart: "calf",
+    startAnchor: { x: 0.5, y: 0.08 },
+    width: 0.46,
+  },
+  head: {
+    parentPart: "torso",
+    minWidth: 0.58,
+    maxWidth: 0.76,
+    fallbackWidth: 0.67,
+    originX: 0.5,
+    originY: 0.4,
+    neckAnchorY: 0.78,
   },
 });
 
@@ -111,6 +155,8 @@ let stablePoseFrames = 0;
 let lastPoseFrameAt = 0;
 let smoothedLandmarks = null;
 let captureQrGeneration = 0;
+let lastHeadAngle = 0;
+const avatarDirectionCache = new Map();
 
 function getAvatarOptions() {
   return {
@@ -212,6 +258,7 @@ function clearAvatarOverlay(resetLandmarks = false) {
   avatarOverlay.dataset.visible = "false";
   if (resetLandmarks) {
     smoothedLandmarks = null;
+    avatarDirectionCache.clear();
   }
 }
 
@@ -282,7 +329,19 @@ function createAvatarPreviewLandmarks(poseName) {
     place(20, 0.4, 0.5);
     place(21, 0.61, 0.49);
     place(22, 0.39, 0.49);
-  } else if (poseName === "neutral") {
+  } else if (
+    [
+      "neutral",
+      "upper",
+      "missing-left",
+      "missing-left-leg",
+      "close",
+      "distant",
+      "cropped",
+      "cropped-legs",
+      "cropped-fallback",
+    ].includes(poseName)
+  ) {
     place(13, 0.63, 0.42);
     place(14, 0.37, 0.42);
     place(15, 0.61, 0.58);
@@ -304,6 +363,95 @@ function createAvatarPreviewLandmarks(poseName) {
     place(20, 0.12, 0.28);
     place(21, 0.87, 0.27);
     place(22, 0.13, 0.27);
+  }
+
+  if (poseName === "upper") {
+    for (let index = 23; index <= 32; index += 1) {
+      landmarks[index] = {
+        ...landmarks[index],
+        visibility: 0,
+        presence: 0,
+      };
+    }
+  }
+
+  if (poseName === "missing-left") {
+    for (const index of [13, 15, 17, 19, 21]) {
+      landmarks[index] = {
+        ...landmarks[index],
+        visibility: 0,
+        presence: 0,
+      };
+    }
+  }
+
+  if (poseName === "missing-left-leg") {
+    for (const index of [23, 25, 27, 29, 31]) {
+      landmarks[index] = {
+        ...landmarks[index],
+        visibility: 0,
+        presence: 0,
+      };
+    }
+  }
+
+  if (poseName === "cropped") {
+    place(11, 0.72, 0.28);
+    place(12, 0.28, 0.28);
+    place(13, 0.76, 0.42);
+    place(14, 0.24, 0.42);
+    place(15, 1.12, 0.58);
+    place(16, -0.12, 0.58);
+    place(17, 1.16, 0.61);
+    place(18, -0.16, 0.61);
+    place(19, 1.17, 0.62);
+    place(20, -0.17, 0.62);
+    place(21, 1.15, 0.6);
+    place(22, -0.15, 0.6);
+  }
+
+  if (poseName === "cropped" || poseName === "cropped-legs") {
+    const kneeY = poseName === "cropped" ? 1.08 : 0.84;
+    const ankleY = poseName === "cropped" ? 1.36 : 1.2;
+    if (poseName === "cropped-legs") {
+      place(11, 0.6, 0.22);
+      place(12, 0.4, 0.22);
+    }
+    place(23, poseName === "cropped" ? 0.62 : 0.565, 0.64);
+    place(24, poseName === "cropped" ? 0.38 : 0.435, 0.64);
+    place(25, 0.59, kneeY);
+    place(26, 0.41, kneeY);
+    place(27, 0.6, ankleY);
+    place(28, 0.4, ankleY);
+    place(29, 0.59, ankleY + 0.04);
+    place(30, 0.41, ankleY + 0.04);
+    place(31, 0.62, ankleY + 0.07);
+    place(32, 0.38, ankleY + 0.07);
+  }
+
+  if (poseName === "cropped-fallback") {
+    place(11, 0.68, 0.28);
+    place(12, 0.32, 0.28);
+    place(23, 0.6, 0.62);
+    place(24, 0.4, 0.62);
+    for (const index of [
+      13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 30,
+      31, 32,
+    ]) {
+      landmarks[index] = {
+        ...landmarks[index],
+        visibility: 0,
+        presence: 0,
+      };
+    }
+  }
+
+  if (poseName === "close" || poseName === "distant") {
+    const scale = poseName === "close" ? 1.55 : 0.58;
+    for (const landmark of landmarks) {
+      landmark.x = 0.5 + (landmark.x - 0.5) * scale;
+      landmark.y = 0.48 + (landmark.y - 0.48) * scale;
+    }
   }
 
   return landmarks;
@@ -338,9 +486,21 @@ function smoothLandmarks(landmarks) {
   return smoothedLandmarks;
 }
 
-function getAvatarPoint(landmarks, index, width, height) {
+function getAvatarPoint(
+  landmarks,
+  index,
+  width,
+  height,
+  minimumConfidence = AVATAR_CONFIDENCE,
+) {
   const landmark = landmarks[index];
-  if (!landmark || landmarkConfidence(landmark) < AVATAR_CONFIDENCE) return null;
+  if (!landmark || landmarkConfidence(landmark) < minimumConfidence) return null;
+  if (
+    !Number.isFinite(landmark.x) ||
+    !Number.isFinite(landmark.y)
+  ) {
+    return null;
+  }
   return {
     x: landmark.x * width,
     y: landmark.y * height,
@@ -360,6 +520,14 @@ function getImageAspectRatio(element, fallback = 1) {
   return element.naturalWidth / element.naturalHeight;
 }
 
+function getRigSegmentOptions(rig) {
+  return {
+    startConnectorRatio: rig.startAnchor,
+    endConnectorRatio: rig.endAnchor,
+    thicknessScale: rig.thicknessScale,
+  };
+}
+
 function updateSegment(
   element,
   start,
@@ -371,6 +539,8 @@ function updateSegment(
     minThickness = 0,
     maxThickness = Number.POSITIVE_INFINITY,
     flipY = false,
+    clipStartRatio = 0,
+    clipTopRatio = 0,
   } = {},
 ) {
   if (!element || !start || !end) {
@@ -404,12 +574,17 @@ function updateSegment(
   const imageX = start.x - unitX * startOffset;
   const imageY = start.y - unitY * startOffset;
   const angle = Math.atan2(dy, dx);
+  const normalizedClipStart = clamp(clipStartRatio, 0, 0.9);
+  const normalizedClipTop = clamp(clipTopRatio, 0, 0.9);
 
   element.style.left = `${imageX}px`;
   element.style.top = `${imageY}px`;
   element.style.width = `${length}px`;
   element.style.height = `${thickness}px`;
   element.style.transform = `translateY(-50%) rotate(${angle}rad) scaleY(${flipY ? -1 : 1})`;
+  element.style.clipPath = normalizedClipStart || normalizedClipTop
+    ? `inset(${normalizedClipTop * 100}% 0 0 ${normalizedClipStart * 100}%)`
+    : "";
   avatarPartGeometry.set(element, {
     type: "segment",
     x: imageX,
@@ -418,6 +593,8 @@ function updateSegment(
     height: thickness,
     angle,
     flipY,
+    clipStartRatio: normalizedClipStart,
+    clipTopRatio: normalizedClipTop,
   });
   setPartVisibility(element, true);
   return true;
@@ -457,27 +634,126 @@ function updateAnchoredImage(
   return true;
 }
 
-function updateFoot(element, knee, ankle, heel, toe, shoulderWidth) {
-  if (!element || !knee || !ankle || !toe) {
+function rotateLocalPoint(geometry, normalizedX, normalizedY) {
+  if (!geometry) return null;
+  const localX = (normalizedX - geometry.originX) * geometry.width;
+  const localY = (normalizedY - geometry.originY) * geometry.height;
+  const cosine = Math.cos(geometry.angle);
+  const sine = Math.sin(geometry.angle);
+  return {
+    x: geometry.x + localX * cosine - localY * sine,
+    y: geometry.y + localX * sine + localY * cosine,
+  };
+}
+
+function getDirection(start, end) {
+  if (!start || !end) return null;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 2) return null;
+  return { x: dx / length, y: dy / length };
+}
+
+function normalizeDirection(direction) {
+  if (!direction) return null;
+  const length = Math.hypot(direction.x, direction.y);
+  if (!Number.isFinite(length) || length < 0.001) return null;
+  return { x: direction.x / length, y: direction.y / length };
+}
+
+function resolveRigDirection(
+  directionKey,
+  detectedStart,
+  detectedEnd,
+  fallbackDirection,
+) {
+  const detectedDirection = getDirection(detectedStart, detectedEnd);
+  if (detectedDirection) {
+    avatarDirectionCache.set(directionKey, detectedDirection);
+    return detectedDirection;
+  }
+
+  return (
+    avatarDirectionCache.get(directionKey) ??
+    normalizeDirection(fallbackDirection)
+  );
+}
+
+function movePoint(point, direction, distance) {
+  return {
+    x: point.x + direction.x * distance,
+    y: point.y + direction.y * distance,
+  };
+}
+
+function hideParts(partNames) {
+  for (const partName of partNames) {
+    setPartVisibility(avatarParts[partName], false);
+  }
+}
+
+function updateRigSegment(
+  element,
+  connectedStart,
+  detectedStart,
+  detectedEnd,
+  shoulderWidth,
+  rig,
+  options,
+  directionKey,
+  fallbackDirection,
+) {
+  const direction = resolveRigDirection(
+    directionKey,
+    detectedStart,
+    detectedEnd,
+    fallbackDirection,
+  );
+  if (!connectedStart || !direction) {
+    setPartVisibility(element, false);
+    return null;
+  }
+
+  const connectedEnd = movePoint(
+    connectedStart,
+    direction,
+    shoulderWidth * rig.boneLength,
+  );
+  if (!updateSegment(element, connectedStart, connectedEnd, options)) {
+    return null;
+  }
+  return connectedEnd;
+}
+
+function updateFoot(
+  element,
+  connectedAnkle,
+  ankle,
+  heel,
+  toe,
+  shoulderWidth,
+  directionKey,
+  fallbackDirection,
+) {
+  if (!element || !connectedAnkle) {
     setPartVisibility(element, false);
     return false;
   }
 
-  const calfLength = Math.hypot(ankle.x - knee.x, ankle.y - knee.y);
-  if (calfLength < 2) {
-    setPartVisibility(element, false);
-    return false;
-  }
-
-  const footTarget = heel
+  const footTarget = heel && toe
     ? {
         x: heel.x * 0.2 + toe.x * 0.8,
         y: heel.y * 0.2 + toe.y * 0.8,
       }
     : toe;
-  const directionX = footTarget.x - ankle.x;
-  const directionY = footTarget.y - ankle.y;
-  if (Math.hypot(directionX, directionY) < 2) {
+  const direction = resolveRigDirection(
+    directionKey,
+    ankle,
+    footTarget,
+    fallbackDirection,
+  );
+  if (!direction) {
     setPartVisibility(element, false);
     return false;
   }
@@ -485,20 +761,16 @@ function updateFoot(element, knee, ankle, heel, toe, shoulderWidth) {
   // 발 이미지는 위(발목)에서 아래(발끝)로 그려져 있으므로 세로축을
   // MediaPipe의 발목-발끝 방향에 맞춘다. 뒤꿈치는 발끝 방향의
   // 순간적인 흔들림만 완화하도록 작은 비율로 섞는다.
-  const angle = Math.atan2(directionY, directionX) - Math.PI / 2;
-  const imageWidth = clamp(
-    calfLength * 0.34,
-    shoulderWidth * 0.38,
-    shoulderWidth * 0.55,
-  );
+  const angle = Math.atan2(direction.y, direction.x) - Math.PI / 2;
+  const imageWidth = shoulderWidth * AVATAR_RIG.foot.width;
 
   return updateAnchoredImage(
     element,
-    ankle,
+    connectedAnkle,
     imageWidth,
     angle,
     0.5,
-    0.08,
+    AVATAR_RIG.foot.startAnchor.y,
   );
 }
 
@@ -517,43 +789,50 @@ function averagePoint(points) {
 
 function updateFist(
   element,
+  connectedWrist,
   elbow,
   wrist,
   indexFinger,
   pinky,
   thumb,
   shoulderWidth,
+  directionKey,
+  fallbackDirection,
 ) {
-  if (!element || !elbow || !wrist) {
-    setPartVisibility(element, false);
-    return false;
-  }
-
-  const forearmX = wrist.x - elbow.x;
-  const forearmY = wrist.y - elbow.y;
-  const forearmLength = Math.hypot(forearmX, forearmY);
-  if (forearmLength < 2) {
+  if (!element || !connectedWrist) {
     setPartVisibility(element, false);
     return false;
   }
 
   const handCenter = averagePoint([indexFinger, pinky, thumb]);
-  let directionX = handCenter ? handCenter.x - wrist.x : forearmX;
-  let directionY = handCenter ? handCenter.y - wrist.y : forearmY;
-
-  if (Math.hypot(directionX, directionY) < shoulderWidth * 0.04) {
-    directionX = forearmX;
-    directionY = forearmY;
+  let directionStart = wrist;
+  let directionEnd = handCenter;
+  if (!getDirection(directionStart, directionEnd)) {
+    directionStart = elbow;
+    directionEnd = wrist;
+  }
+  const direction = resolveRigDirection(
+    directionKey,
+    directionStart,
+    directionEnd,
+    fallbackDirection,
+  );
+  if (!direction) {
+    setPartVisibility(element, false);
+    return false;
   }
 
-  const imageWidth = clamp(
-    forearmLength * 0.28,
-    shoulderWidth * 0.2,
-    shoulderWidth * 0.3,
-  );
-  const angle = Math.atan2(directionY, directionX) - Math.PI / 2;
+  const imageWidth = shoulderWidth * AVATAR_RIG.fist.width;
+  const angle = Math.atan2(direction.y, direction.x) - Math.PI / 2;
 
-  return updateAnchoredImage(element, wrist, imageWidth, angle, 0.5, 0.12);
+  return updateAnchoredImage(
+    element,
+    connectedWrist,
+    imageWidth,
+    angle,
+    0.5,
+    AVATAR_RIG.fist.startAnchor.y,
+  );
 }
 
 function renderAvatar(landmarks) {
@@ -571,30 +850,42 @@ function renderAvatar(landmarks) {
   }
 
   const point = (index) => getAvatarPoint(landmarks, index, width, height);
+  const directionPoint = (index) =>
+    getAvatarPoint(
+      landmarks,
+      index,
+      width,
+      height,
+      AVATAR_DIRECTION_CONFIDENCE,
+    );
   const leftEar = point(7);
   const rightEar = point(8);
   const leftShoulder = point(11);
   const rightShoulder = point(12);
-  const leftElbow = point(13);
-  const rightElbow = point(14);
-  const leftWrist = point(15);
-  const rightWrist = point(16);
-  const leftPinky = point(17);
-  const rightPinky = point(18);
-  const leftIndex = point(19);
-  const rightIndex = point(20);
-  const leftThumb = point(21);
-  const rightThumb = point(22);
   const leftHip = point(23);
   const rightHip = point(24);
-  const leftKnee = point(25);
-  const rightKnee = point(26);
-  const leftAnkle = point(27);
-  const rightAnkle = point(28);
-  const leftHeel = point(29);
-  const rightHeel = point(30);
-  const leftToe = point(31);
-  const rightToe = point(32);
+  const leftShoulderDirectionPoint = directionPoint(11);
+  const rightShoulderDirectionPoint = directionPoint(12);
+  const leftElbowDirectionPoint = directionPoint(13);
+  const rightElbowDirectionPoint = directionPoint(14);
+  const leftWristDirectionPoint = directionPoint(15);
+  const rightWristDirectionPoint = directionPoint(16);
+  const leftPinkyDirectionPoint = directionPoint(17);
+  const rightPinkyDirectionPoint = directionPoint(18);
+  const leftIndexDirectionPoint = directionPoint(19);
+  const rightIndexDirectionPoint = directionPoint(20);
+  const leftThumbDirectionPoint = directionPoint(21);
+  const rightThumbDirectionPoint = directionPoint(22);
+  const leftHipDirectionPoint = directionPoint(23);
+  const rightHipDirectionPoint = directionPoint(24);
+  const leftKneeDirectionPoint = directionPoint(25);
+  const rightKneeDirectionPoint = directionPoint(26);
+  const leftAnkleDirectionPoint = directionPoint(27);
+  const rightAnkleDirectionPoint = directionPoint(28);
+  const leftHeelDirectionPoint = directionPoint(29);
+  const rightHeelDirectionPoint = directionPoint(30);
+  const leftToeDirectionPoint = directionPoint(31);
+  const rightToeDirectionPoint = directionPoint(32);
 
   if (!leftShoulder || !rightShoulder) {
     clearAvatarOverlay();
@@ -613,163 +904,287 @@ function renderAvatar(landmarks) {
     x: (leftShoulder.x + rightShoulder.x) / 2,
     y: (leftShoulder.y + rightShoulder.y) / 2,
   };
+  const shoulderDown = {
+    x: -Math.sin(shoulderAngle),
+    y: Math.cos(shoulderAngle),
+  };
 
   updateAnchoredImage(
     avatarParts.torso,
     shoulderCenter,
-    shoulderWidth * 1.25,
+    shoulderWidth * AVATAR_RIG.torso.width,
     shoulderAngle,
-    0.5,
-    0.17,
+    AVATAR_RIG.torso.originX,
+    AVATAR_RIG.torso.originY,
+  );
+  const torsoGeometry = avatarPartGeometry.get(avatarParts.torso);
+  const neckSocket = rotateLocalPoint(
+    torsoGeometry,
+    AVATAR_RIG.torso.neckAnchor.x,
+    AVATAR_RIG.torso.neckAnchor.y,
+  );
+  const waistSocket = rotateLocalPoint(
+    torsoGeometry,
+    AVATAR_RIG.torso.waistAnchor.x,
+    AVATAR_RIG.torso.waistAnchor.y,
   );
   const upperArmOptions = {
-    ...AVATAR_PART_LAYOUT.upperArm,
+    ...getRigSegmentOptions(AVATAR_RIG.upperArm),
     minThickness: shoulderWidth * 0.16,
     maxThickness: shoulderWidth * 0.27,
   };
+  const leftUpperArmOptions = {
+    ...upperArmOptions,
+    startConnectorRatio: AVATAR_RIG.upperArm.sides.left.startAnchor,
+    clipStartRatio: AVATAR_RIG.upperArm.sides.left.clipStart,
+    clipTopRatio: AVATAR_RIG.upperArm.sides.left.clipTop,
+    flipY: true,
+  };
+  const rightUpperArmOptions = {
+    ...upperArmOptions,
+    startConnectorRatio: AVATAR_RIG.upperArm.sides.right.startAnchor,
+    clipStartRatio: AVATAR_RIG.upperArm.sides.right.clipStart,
+    clipTopRatio: AVATAR_RIG.upperArm.sides.right.clipTop,
+  };
   const lowerArmOptions = {
-    ...AVATAR_PART_LAYOUT.lowerArm,
+    ...getRigSegmentOptions(AVATAR_RIG.lowerArm),
     minThickness: shoulderWidth * 0.14,
     maxThickness: shoulderWidth * 0.23,
   };
   const thighOptions = {
-    ...AVATAR_PART_LAYOUT.thigh,
+    ...getRigSegmentOptions(AVATAR_RIG.thigh),
     minThickness: shoulderWidth * 0.27,
     maxThickness: shoulderWidth * 0.4,
   };
   const calfOptions = {
-    ...AVATAR_PART_LAYOUT.calf,
+    ...getRigSegmentOptions(AVATAR_RIG.calf),
     minThickness: shoulderWidth * 0.23,
     maxThickness: shoulderWidth * 0.33,
   };
 
-  updateSegment(
+  const leftConnectedElbow = updateRigSegment(
     avatarParts["left-upper-arm"],
     leftShoulder,
-    leftElbow,
-    { ...upperArmOptions, flipY: true },
+    leftShoulderDirectionPoint,
+    leftElbowDirectionPoint ?? leftWristDirectionPoint,
+    shoulderWidth,
+    AVATAR_RIG.upperArm,
+    leftUpperArmOptions,
+    "leftUpperArm",
+    shoulderDown,
   );
-  updateSegment(
+  const leftUpperArmDirection =
+    getDirection(leftShoulder, leftConnectedElbow) ?? shoulderDown;
+  const leftConnectedWrist = updateRigSegment(
     avatarParts["left-lower-arm"],
-    leftElbow,
-    leftWrist,
+    leftConnectedElbow,
+    leftElbowDirectionPoint ?? leftShoulderDirectionPoint,
+    leftWristDirectionPoint ?? leftIndexDirectionPoint,
+    shoulderWidth,
+    AVATAR_RIG.lowerArm,
     { ...lowerArmOptions, flipY: true },
+    "leftLowerArm",
+    leftUpperArmDirection,
   );
-  updateSegment(
-    avatarParts["right-upper-arm"],
-    rightShoulder,
-    rightElbow,
-    upperArmOptions,
-  );
-  updateSegment(
-    avatarParts["right-lower-arm"],
-    rightElbow,
-    rightWrist,
-    lowerArmOptions,
-  );
-  updateSegment(avatarParts.pelvis, leftHip, rightHip, {
-    ...AVATAR_PART_LAYOUT.pelvis,
-    minThickness: shoulderWidth * 0.3,
-    maxThickness: shoulderWidth * 0.48,
-  });
-  updateSegment(avatarParts["left-thigh"], leftHip, leftKnee, {
-    ...thighOptions,
-    flipY: true,
-  });
-  updateSegment(avatarParts["left-calf"], leftKnee, leftAnkle, {
-    ...calfOptions,
-    flipY: true,
-  });
-  updateSegment(avatarParts["right-thigh"], rightHip, rightKnee, thighOptions);
-  updateSegment(avatarParts["right-calf"], rightKnee, rightAnkle, calfOptions);
-  updateFoot(
-    avatarParts["left-foot"],
-    leftKnee,
-    leftAnkle,
-    leftHeel,
-    leftToe,
-    shoulderWidth,
-  );
-  updateFoot(
-    avatarParts["right-foot"],
-    rightKnee,
-    rightAnkle,
-    rightHeel,
-    rightToe,
-    shoulderWidth,
-  );
+  const leftLowerArmDirection =
+    getDirection(leftConnectedElbow, leftConnectedWrist) ?? leftUpperArmDirection;
   updateFist(
     avatarParts["left-fist"],
-    leftElbow,
-    leftWrist,
-    leftIndex,
-    leftPinky,
-    leftThumb,
+    leftConnectedWrist,
+    leftElbowDirectionPoint,
+    leftWristDirectionPoint,
+    leftIndexDirectionPoint,
+    leftPinkyDirectionPoint,
+    leftThumbDirectionPoint,
     shoulderWidth,
-  );
-  updateFist(
-    avatarParts["right-fist"],
-    rightElbow,
-    rightWrist,
-    rightIndex,
-    rightPinky,
-    rightThumb,
-    shoulderWidth,
+    "leftFist",
+    leftLowerArmDirection,
   );
 
-  if (leftEar && rightEar) {
-    const earDistance = Math.hypot(
-      rightEar.x - leftEar.x,
-      rightEar.y - leftEar.y,
+  const rightConnectedElbow = updateRigSegment(
+    avatarParts["right-upper-arm"],
+    rightShoulder,
+    rightShoulderDirectionPoint,
+    rightElbowDirectionPoint ?? rightWristDirectionPoint,
+    shoulderWidth,
+    AVATAR_RIG.upperArm,
+    rightUpperArmOptions,
+    "rightUpperArm",
+    shoulderDown,
+  );
+  const rightUpperArmDirection =
+    getDirection(rightShoulder, rightConnectedElbow) ?? shoulderDown;
+  const rightConnectedWrist = updateRigSegment(
+    avatarParts["right-lower-arm"],
+    rightConnectedElbow,
+    rightElbowDirectionPoint ?? rightShoulderDirectionPoint,
+    rightWristDirectionPoint ?? rightIndexDirectionPoint,
+    shoulderWidth,
+    AVATAR_RIG.lowerArm,
+    lowerArmOptions,
+    "rightLowerArm",
+    rightUpperArmDirection,
+  );
+  const rightLowerArmDirection =
+    getDirection(rightConnectedElbow, rightConnectedWrist) ?? rightUpperArmDirection;
+  updateFist(
+    avatarParts["right-fist"],
+    rightConnectedWrist,
+    rightElbowDirectionPoint,
+    rightWristDirectionPoint,
+    rightIndexDirectionPoint,
+    rightPinkyDirectionPoint,
+    rightThumbDirectionPoint,
+    shoulderWidth,
+    "rightFist",
+    rightLowerArmDirection,
+  );
+
+  if ((leftHip || rightHip) && waistSocket) {
+    const detectedHipDirection = getDirection(
+      leftHipDirectionPoint,
+      rightHipDirectionPoint,
     );
-    const headCenter = {
-      x: (leftEar.x + rightEar.x) / 2,
-      y: (leftEar.y + rightEar.y) / 2,
+    const fallbackHipDirection = {
+      x: -Math.cos(shoulderAngle),
+      y: -Math.sin(shoulderAngle),
     };
-    const headWidth = clamp(
-      earDistance * 2.25,
-      shoulderWidth * 0.58,
-      shoulderWidth * 0.76,
+    const hipDirection = detectedHipDirection ?? fallbackHipDirection;
+    const pelvisTargetThickness = shoulderWidth * AVATAR_RIG.pelvis.maxThickness;
+    const pelvisCenter = movePoint(
+      waistSocket,
+      shoulderDown,
+      pelvisTargetThickness * (0.5 - AVATAR_RIG.pelvis.overlap),
     );
-    const headOriginY = 0.4;
-    const headConnectorY = 0.78;
+    const halfHipSpan = shoulderWidth * AVATAR_RIG.pelvis.hipSocketSpan * 0.5;
+    const leftHipSocket = movePoint(pelvisCenter, hipDirection, -halfHipSpan);
+    const rightHipSocket = movePoint(pelvisCenter, hipDirection, halfHipSpan);
+
+    updateSegment(avatarParts.pelvis, leftHipSocket, rightHipSocket, {
+      ...getRigSegmentOptions(AVATAR_RIG.pelvis),
+      minThickness: shoulderWidth * AVATAR_RIG.pelvis.minThickness,
+      maxThickness: shoulderWidth * AVATAR_RIG.pelvis.maxThickness,
+      flipY: true,
+    });
+
+    const leftConnectedKnee = updateRigSegment(
+      avatarParts["left-thigh"],
+      leftHip ? leftHipSocket : null,
+      leftHipDirectionPoint,
+      leftKneeDirectionPoint ?? leftAnkleDirectionPoint,
+      shoulderWidth,
+      AVATAR_RIG.thigh,
+      { ...thighOptions, flipY: true },
+      "leftThigh",
+      shoulderDown,
+    );
+    const leftThighDirection =
+      getDirection(leftHipSocket, leftConnectedKnee) ?? shoulderDown;
+    const leftConnectedAnkle = updateRigSegment(
+      avatarParts["left-calf"],
+      leftConnectedKnee,
+      leftKneeDirectionPoint ?? leftHipDirectionPoint,
+      leftAnkleDirectionPoint ?? leftToeDirectionPoint,
+      shoulderWidth,
+      AVATAR_RIG.calf,
+      { ...calfOptions, flipY: true },
+      "leftCalf",
+      leftThighDirection,
+    );
+    const leftCalfDirection =
+      getDirection(leftConnectedKnee, leftConnectedAnkle) ?? leftThighDirection;
+    updateFoot(
+      avatarParts["left-foot"],
+      leftConnectedAnkle,
+      leftAnkleDirectionPoint,
+      leftHeelDirectionPoint,
+      leftToeDirectionPoint,
+      shoulderWidth,
+      "leftFoot",
+      leftCalfDirection,
+    );
+
+    const rightConnectedKnee = updateRigSegment(
+      avatarParts["right-thigh"],
+      rightHip ? rightHipSocket : null,
+      rightHipDirectionPoint,
+      rightKneeDirectionPoint ?? rightAnkleDirectionPoint,
+      shoulderWidth,
+      AVATAR_RIG.thigh,
+      thighOptions,
+      "rightThigh",
+      shoulderDown,
+    );
+    const rightThighDirection =
+      getDirection(rightHipSocket, rightConnectedKnee) ?? shoulderDown;
+    const rightConnectedAnkle = updateRigSegment(
+      avatarParts["right-calf"],
+      rightConnectedKnee,
+      rightKneeDirectionPoint ?? rightHipDirectionPoint,
+      rightAnkleDirectionPoint ?? rightToeDirectionPoint,
+      shoulderWidth,
+      AVATAR_RIG.calf,
+      calfOptions,
+      "rightCalf",
+      rightThighDirection,
+    );
+    const rightCalfDirection =
+      getDirection(rightConnectedKnee, rightConnectedAnkle) ?? rightThighDirection;
+    updateFoot(
+      avatarParts["right-foot"],
+      rightConnectedAnkle,
+      rightAnkleDirectionPoint,
+      rightHeelDirectionPoint,
+      rightToeDirectionPoint,
+      shoulderWidth,
+      "rightFoot",
+      rightCalfDirection,
+    );
+  } else {
+    hideParts([
+      "pelvis",
+      "left-thigh",
+      "left-calf",
+      "left-foot",
+      "right-thigh",
+      "right-calf",
+      "right-foot",
+    ]);
+  }
+
+  if (neckSocket) {
+    let headAngle = lastHeadAngle || shoulderAngle;
+    let headWidth = shoulderWidth * AVATAR_RIG.head.fallbackWidth;
+    if (leftEar && rightEar) {
+      const earDistance = Math.hypot(
+        rightEar.x - leftEar.x,
+        rightEar.y - leftEar.y,
+      );
+      headWidth = clamp(
+        earDistance * 2.25,
+        shoulderWidth * AVATAR_RIG.head.minWidth,
+        shoulderWidth * AVATAR_RIG.head.maxWidth,
+      );
+      headAngle = Math.atan2(
+        leftEar.y - rightEar.y,
+        leftEar.x - rightEar.x,
+      );
+      lastHeadAngle = headAngle;
+    }
     const headHeight = headWidth / getImageAspectRatio(avatarParts.head);
-    const headAngle = Math.atan2(
-      leftEar.y - rightEar.y,
-      leftEar.x - rightEar.x,
-    );
-    const shoulderDown = {
-      x: -Math.sin(shoulderAngle),
-      y: Math.cos(shoulderAngle),
-    };
-    const neckTarget = {
-      x: shoulderCenter.x - shoulderDown.x * shoulderWidth * 0.1,
-      y: shoulderCenter.y - shoulderDown.y * shoulderWidth * 0.1,
-    };
-    const connectorDistance = headHeight * (headConnectorY - headOriginY);
-    const connectedAnchor = {
-      x: neckTarget.x + Math.sin(headAngle) * connectorDistance,
-      y: neckTarget.y - Math.cos(headAngle) * connectorDistance,
-    };
-    const connectedHeadCenter = {
-      x: clamp(
-        connectedAnchor.x,
-        headCenter.x - headWidth * 0.08,
-        headCenter.x + headWidth * 0.08,
-      ),
-      y: clamp(
-        connectedAnchor.y,
-        headCenter.y - headHeight * 0.08,
-        headCenter.y + headHeight * 0.12,
-      ),
+    const connectorDistance =
+      headHeight * (AVATAR_RIG.head.neckAnchorY - AVATAR_RIG.head.originY);
+    const connectedHeadAnchor = {
+      x: neckSocket.x + Math.sin(headAngle) * connectorDistance,
+      y: neckSocket.y - Math.cos(headAngle) * connectorDistance,
     };
     updateAnchoredImage(
       avatarParts.head,
-      connectedHeadCenter,
+      connectedHeadAnchor,
       headWidth,
       headAngle,
-      0.5,
-      headOriginY,
+      AVATAR_RIG.head.originX,
+      AVATAR_RIG.head.originY,
     );
   } else {
     setPartVisibility(avatarParts.head, false);
@@ -977,13 +1392,33 @@ function drawAvatarPart(context, image, geometry, scale) {
   context.shadowBlur = 5 * scale;
 
   if (geometry.type === "segment") {
-    context.drawImage(
-      image,
-      0,
-      -geometry.height / 2,
-      geometry.width,
-      geometry.height,
-    );
+    const clipStart = geometry.clipStartRatio ?? 0;
+    const clipTop = geometry.clipTopRatio ?? 0;
+    if (clipStart > 0 || clipTop > 0) {
+      const sourceX = image.naturalWidth * clipStart;
+      const sourceY = image.naturalHeight * clipTop;
+      const sourceWidth = image.naturalWidth - sourceX;
+      const sourceHeight = image.naturalHeight - sourceY;
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        geometry.width * clipStart,
+        -geometry.height / 2 + geometry.height * clipTop,
+        geometry.width * (1 - clipStart),
+        geometry.height * (1 - clipTop),
+      );
+    } else {
+      context.drawImage(
+        image,
+        0,
+        -geometry.height / 2,
+        geometry.width,
+        geometry.height,
+      );
+    }
   } else {
     context.drawImage(
       image,
@@ -1221,3 +1656,4 @@ if (AVATAR_PREVIEW_POSE) {
   startCamera();
   requestAnimationFrame(poseLoop);
 }
+
